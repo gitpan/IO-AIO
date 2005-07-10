@@ -1,5 +1,3 @@
-#define PERL_NO_GET_CONTEXT
-
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
@@ -79,7 +77,7 @@ poll_wait ()
 }
 
 static int
-poll_cb (pTHX)
+poll_cb ()
 {
   dSP;
   int count = 0;
@@ -229,8 +227,7 @@ end_thread (void)
 }
 
 static void
-read_write (pTHX_
-            int dowrite, int fd, off_t offset, size_t length,
+read_write (int dowrite, int fd, off_t offset, size_t length,
             SV *data, STRLEN dataoffset, SV *callback)
 {
   aio_req req;
@@ -402,7 +399,7 @@ max_parallel(nthreads)
         while (started > nthreads)
           {
             poll_wait ();
-            poll_cb (aTHX);
+            poll_cb ();
           }
 }
 
@@ -475,7 +472,7 @@ aio_read(fh,offset,length,data,dataoffset,callback)
         SV *		callback
 	PROTOTYPE: $$$$$$
         CODE:
-        read_write (aTHX_ 0, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
+        read_write (0, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
 
 void
 aio_write(fh,offset,length,data,dataoffset,callback)
@@ -487,7 +484,7 @@ aio_write(fh,offset,length,data,dataoffset,callback)
         SV *		callback
 	PROTOTYPE: $$$$$$
         CODE:
-        read_write (aTHX_ 1, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
+        read_write (1, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
 
 void
 aio_readahead(fh,offset,length,callback)
@@ -589,7 +586,7 @@ int
 poll_cb(...)
 	PROTOTYPE:
 	CODE:
-        RETVAL = poll_cb (aTHX);
+        RETVAL = poll_cb ();
 	OUTPUT:
 	RETVAL
 

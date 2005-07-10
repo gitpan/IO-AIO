@@ -4,6 +4,30 @@ NAME
 SYNOPSIS
      use IO::AIO;
 
+     aio_open "/etc/passwd", O_RDONLY, 0, sub {
+        my ($fh) = @_;
+        ...
+     };
+
+     aio_unlink "/tmp/file", sub { };
+
+     aio_read $fh, 30000, 1024, $buffer, 0, sub {
+        $_[0] > 0 or die "read error: $!";
+     };
+
+     # Event
+     Event->io (fd => IO::AIO::poll_fileno,
+                poll => 'r',
+                cb => \&IO::AIO::poll_cb);
+
+     # Glib/Gtk2
+     add_watch Glib::IO IO::AIO::poll_fileno,
+               \&IO::AIO::poll_cb;
+
+     # Tk
+     Tk::Event::IO->fileevent (IO::AIO::poll_fileno, "",
+                               readable => \&IO::AIO::poll_cb);
+
 DESCRIPTION
     This module implements asynchronous I/O using whatever means your
     operating system supports.
@@ -21,7 +45,8 @@ DESCRIPTION
     Although the module will work with in the presence of other threads, it
     is currently not reentrant, so use appropriate locking yourself.
 
-  API NOTES
+FUNCTIONS
+  AIO FUNCTIONS
     All the "aio_*" calls are more or less thin wrappers around the syscall
     with the same name (sans "aio_"). The arguments are similar or
     identical, and they all accept an additional $callback argument which
@@ -37,76 +62,6 @@ DESCRIPTION
     is that at the time the request is being executed, the current working
     directory could have changed. Alternatively, you can make sure that you
     never change the current working directory.
-
-    IO::AIO::min_parallel $nthreads
-        Set the minimum number of AIO threads to $nthreads. The default is
-        1, which means a single asynchronous operation can be done at one
-        time (the number of outstanding operations, however, is unlimited).
-
-        It is recommended to keep the number of threads low, as some Linux
-        kernel versions will scale negatively with the number of threads
-        (higher parallelity => MUCH higher latency). With current Linux 2.6
-        versions, 4-32 threads should be fine.
-
-        Under normal circumstances you don't need to call this function, as
-        this module automatically starts some threads (the exact number
-        might change, and is currently 4).
-
-    IO::AIO::max_parallel $nthreads
-        Sets the maximum number of AIO threads to $nthreads. If more than
-        the specified number of threads are currently running, kill them.
-        This function blocks until the limit is reached.
-
-        This module automatically runs "max_parallel 0" at program end, to
-        ensure that all threads are killed and that there are no outstanding
-        requests.
-
-        Under normal circumstances you don't need to call this function.
-
-    $oldnreqs = IO::AIO::max_outstanding $nreqs
-        Sets the maximum number of outstanding requests to $nreqs. If you
-        try to queue up more than this number of requests, the caller will
-        block until some requests have been handled.
-
-        The default is very large, so normally there is no practical limit.
-        If you queue up many requests in a loop it it often improves speed
-        if you set this to a relatively low number, such as 100.
-
-        Under normal circumstances you don't need to call this function.
-
-    $fileno = IO::AIO::poll_fileno
-        Return the *request result pipe filehandle*. This filehandle must be
-        polled for reading by some mechanism outside this module (e.g. Event
-        or select, see below). If the pipe becomes readable you have to call
-        "poll_cb" to check the results.
-
-        See "poll_cb" for an example.
-
-    IO::AIO::poll_cb
-        Process all outstanding events on the result pipe. You have to call
-        this regularly. Returns the number of events processed. Returns
-        immediately when no events are outstanding.
-
-        You can use Event to multiplex, e.g.:
-
-           Event->io (fd => IO::AIO::poll_fileno,
-                      poll => 'r', async => 1,
-                      cb => \&IO::AIO::poll_cb);
-
-    IO::AIO::poll_wait
-        Wait till the result filehandle becomes ready for reading (simply
-        does a select on the filehandle. This is useful if you want to
-        synchronously wait for some requests to finish).
-
-        See "nreqs" for an example.
-
-    IO::AIO::nreqs
-        Returns the number of requests currently outstanding.
-
-        Example: wait till there are no outstanding requests anymore:
-
-           IO::AIO::poll_wait, IO::AIO::poll_cb
-              while IO::AIO::nreqs;
 
     aio_open $pathname, $flags, $mode, $callback
         Asynchronously open or create a file and call the callback with a
@@ -147,8 +102,8 @@ DESCRIPTION
         offset 0 within the scalar:
 
            aio_read $fh, 7, 15, $buffer, 0, sub {
-              $_[0] >= 0 or die "read error: $!";
-              print "read <$buffer>\n";
+              $_[0] > 0 or die "read error: $!";
+              print "read $_[0] bytes: <$buffer>\n";
            };
 
     aio_readahead $fh,$offset,$length, $callback
@@ -199,8 +154,76 @@ DESCRIPTION
         Asynchronously call fdatasync on the given filehandle and call the
         callback with the fdatasync result code.
 
-BUGS
-       - could be optimized to use more semaphores instead of filehandles.
+  SUPPORT FUNCTIONS
+    $fileno = IO::AIO::poll_fileno
+        Return the *request result pipe filehandle*. This filehandle must be
+        polled for reading by some mechanism outside this module (e.g. Event
+        or select, see below). If the pipe becomes readable you have to call
+        "poll_cb" to check the results.
+
+        See "poll_cb" for an example.
+
+    IO::AIO::poll_cb
+        Process all outstanding events on the result pipe. You have to call
+        this regularly. Returns the number of events processed. Returns
+        immediately when no events are outstanding.
+
+        You can use Event to multiplex, e.g.:
+
+           Event->io (fd => IO::AIO::poll_fileno,
+                      poll => 'r', async => 1,
+                      cb => \&IO::AIO::poll_cb);
+
+    IO::AIO::poll_wait
+        Wait till the result filehandle becomes ready for reading (simply
+        does a select on the filehandle. This is useful if you want to
+        synchronously wait for some requests to finish).
+
+        See "nreqs" for an example.
+
+    IO::AIO::nreqs
+        Returns the number of requests currently outstanding.
+
+        Example: wait till there are no outstanding requests anymore:
+
+           IO::AIO::poll_wait, IO::AIO::poll_cb
+              while IO::AIO::nreqs;
+
+    IO::AIO::min_parallel $nthreads
+        Set the minimum number of AIO threads to $nthreads. The default is
+        1, which means a single asynchronous operation can be done at one
+        time (the number of outstanding operations, however, is unlimited).
+
+        It is recommended to keep the number of threads low, as some Linux
+        kernel versions will scale negatively with the number of threads
+        (higher parallelity => MUCH higher latency). With current Linux 2.6
+        versions, 4-32 threads should be fine.
+
+        Under normal circumstances you don't need to call this function, as
+        this module automatically starts some threads (the exact number
+        might change, and is currently 4).
+
+    IO::AIO::max_parallel $nthreads
+        Sets the maximum number of AIO threads to $nthreads. If more than
+        the specified number of threads are currently running, kill them.
+        This function blocks until the limit is reached.
+
+        This module automatically runs "max_parallel 0" at program end, to
+        ensure that all threads are killed and that there are no outstanding
+        requests.
+
+        Under normal circumstances you don't need to call this function.
+
+    $oldnreqs = IO::AIO::max_outstanding $nreqs
+        Sets the maximum number of outstanding requests to $nreqs. If you
+        try to queue up more than this number of requests, the caller will
+        block until some requests have been handled.
+
+        The default is very large, so normally there is no practical limit.
+        If you queue up many requests in a loop it it often improves speed
+        if you set this to a relatively low number, such as 100.
+
+        Under normal circumstances you don't need to call this function.
 
 SEE ALSO
     Coro, Linux::AIO.

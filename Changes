@@ -1,6 +1,12 @@
 Revision history for IO::AIO
 
+0.3  Mon Jul 11 01:42:37 CEST 2005
+	- restructured manpage.
+        - added SYNOPSIS with examples for Event, Glib, Tk.
+        - remove explicit context support so I don't have to maintain
+          it for threaded perls (i.e. it should work now :).
 
+0.2  Sun Jul 10 22:57:12 CEST 2005
 	- return immediately from poll_wait if nreqs==0.
         - get rid of the request pipe and use faster thread-thread
           communications for most requests and responses.

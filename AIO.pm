@@ -6,6 +6,30 @@ IO::AIO - Asynchronous Input/Output
 
  use IO::AIO;
 
+ aio_open "/etc/passwd", O_RDONLY, 0, sub {
+    my ($fh) = @_;
+    ...
+ };
+
+ aio_unlink "/tmp/file", sub { };
+
+ aio_read $fh, 30000, 1024, $buffer, 0, sub {
+    $_[0] > 0 or die "read error: $!";
+ };
+
+ # Event
+ Event->io (fd => IO::AIO::poll_fileno,
+            poll => 'r',
+            cb => \&IO::AIO::poll_cb);
+
+ # Glib/Gtk2
+ add_watch Glib::IO IO::AIO::poll_fileno,
+           \&IO::AIO::poll_cb;
+
+ # Tk
+ Tk::Event::IO->fileevent (IO::AIO::poll_fileno, "",
+                           readable => \&IO::AIO::poll_cb);
+
 =head1 DESCRIPTION
 
 This module implements asynchronous I/O using whatever means your
@@ -23,7 +47,28 @@ remaining functionality would have to be implemented using threads anyway.
 Although the module will work with in the presence of other threads, it is
 currently not reentrant, so use appropriate locking yourself.
 
-=head2 API NOTES
+=cut
+
+package IO::AIO;
+
+use base 'Exporter';
+
+use Fcntl ();
+
+BEGIN {
+   $VERSION = 0.3;
+
+   @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
+                aio_fsync aio_fdatasync aio_readahead);
+   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
+
+   require XSLoader;
+   XSLoader::load IO::AIO, $VERSION;
+}
+
+=head1 FUNCTIONS
+
+=head2 AIO FUNCTIONS
 
 All the C<aio_*> calls are more or less thin wrappers around the syscall
 with the same name (sans C<aio_>). The arguments are similar or identical,
@@ -41,101 +86,6 @@ directory could have changed. Alternatively, you can make sure that you
 never change the current working directory.
 
 =over 4
-
-=cut
-
-package IO::AIO;
-
-use base 'Exporter';
-
-use Fcntl ();
-
-BEGIN {
-   $VERSION = 0.2;
-
-   @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
-                aio_fsync aio_fdatasync aio_readahead);
-   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
-
-   require XSLoader;
-   XSLoader::load IO::AIO, $VERSION;
-}
-
-=item IO::AIO::min_parallel $nthreads
-
-Set the minimum number of AIO threads to C<$nthreads>. The default is
-C<1>, which means a single asynchronous operation can be done at one time
-(the number of outstanding operations, however, is unlimited).
-
-It is recommended to keep the number of threads low, as some Linux
-kernel versions will scale negatively with the number of threads (higher
-parallelity => MUCH higher latency). With current Linux 2.6 versions, 4-32
-threads should be fine.
-
-Under normal circumstances you don't need to call this function, as this
-module automatically starts some threads (the exact number might change,
-and is currently 4).
-
-=item IO::AIO::max_parallel $nthreads
-
-Sets the maximum number of AIO threads to C<$nthreads>. If more than
-the specified number of threads are currently running, kill them. This
-function blocks until the limit is reached.
-
-This module automatically runs C<max_parallel 0> at program end, to ensure
-that all threads are killed and that there are no outstanding requests.
-
-Under normal circumstances you don't need to call this function.
-
-=item $oldnreqs = IO::AIO::max_outstanding $nreqs
-
-Sets the maximum number of outstanding requests to C<$nreqs>. If you
-try to queue up more than this number of requests, the caller will block until
-some requests have been handled.
-
-The default is very large, so normally there is no practical limit. If you
-queue up many requests in a loop it it often improves speed if you set
-this to a relatively low number, such as C<100>.
-
-Under normal circumstances you don't need to call this function.
-
-=item $fileno = IO::AIO::poll_fileno
-
-Return the I<request result pipe filehandle>. This filehandle must be
-polled for reading by some mechanism outside this module (e.g. Event
-or select, see below). If the pipe becomes readable you have to call
-C<poll_cb> to check the results.
-
-See C<poll_cb> for an example.
-
-=item IO::AIO::poll_cb
-
-Process all outstanding events on the result pipe. You have to call this
-regularly. Returns the number of events processed. Returns immediately
-when no events are outstanding.
-
-You can use Event to multiplex, e.g.:
-
-   Event->io (fd => IO::AIO::poll_fileno,
-              poll => 'r', async => 1,
-              cb => \&IO::AIO::poll_cb);
-
-=item IO::AIO::poll_wait
-
-Wait till the result filehandle becomes ready for reading (simply does a
-select on the filehandle. This is useful if you want to synchronously wait
-for some requests to finish).
-
-See C<nreqs> for an example.
-
-=item IO::AIO::nreqs
-
-Returns the number of requests currently outstanding.
-
-Example: wait till there are no outstanding requests anymore:
-
-   IO::AIO::poll_wait, IO::AIO::poll_cb
-      while IO::AIO::nreqs;
 
 =item aio_open $pathname, $flags, $mode, $callback
 
@@ -180,8 +130,8 @@ Example: Read 15 bytes at offset 7 into scalar C<$buffer>, strating at
 offset C<0> within the scalar:
 
    aio_read $fh, 7, 15, $buffer, 0, sub {
-      $_[0] >= 0 or die "read error: $!";
-      print "read <$buffer>\n";
+      $_[0] > 0 or die "read error: $!";
+      print "read $_[0] bytes: <$buffer>\n";
    };
 
 =item aio_readahead $fh,$offset,$length, $callback
@@ -236,6 +186,90 @@ with the fsync result code.
 Asynchronously call fdatasync on the given filehandle and call the
 callback with the fdatasync result code.
 
+=back
+
+=head2 SUPPORT FUNCTIONS
+
+=over 4
+
+=item $fileno = IO::AIO::poll_fileno
+
+Return the I<request result pipe filehandle>. This filehandle must be
+polled for reading by some mechanism outside this module (e.g. Event
+or select, see below). If the pipe becomes readable you have to call
+C<poll_cb> to check the results.
+
+See C<poll_cb> for an example.
+
+=item IO::AIO::poll_cb
+
+Process all outstanding events on the result pipe. You have to call this
+regularly. Returns the number of events processed. Returns immediately
+when no events are outstanding.
+
+You can use Event to multiplex, e.g.:
+
+   Event->io (fd => IO::AIO::poll_fileno,
+              poll => 'r', async => 1,
+              cb => \&IO::AIO::poll_cb);
+
+=item IO::AIO::poll_wait
+
+Wait till the result filehandle becomes ready for reading (simply does a
+select on the filehandle. This is useful if you want to synchronously wait
+for some requests to finish).
+
+See C<nreqs> for an example.
+
+=item IO::AIO::nreqs
+
+Returns the number of requests currently outstanding.
+
+Example: wait till there are no outstanding requests anymore:
+
+   IO::AIO::poll_wait, IO::AIO::poll_cb
+      while IO::AIO::nreqs;
+
+=item IO::AIO::min_parallel $nthreads
+
+Set the minimum number of AIO threads to C<$nthreads>. The default is
+C<1>, which means a single asynchronous operation can be done at one time
+(the number of outstanding operations, however, is unlimited).
+
+It is recommended to keep the number of threads low, as some Linux
+kernel versions will scale negatively with the number of threads (higher
+parallelity => MUCH higher latency). With current Linux 2.6 versions, 4-32
+threads should be fine.
+
+Under normal circumstances you don't need to call this function, as this
+module automatically starts some threads (the exact number might change,
+and is currently 4).
+
+=item IO::AIO::max_parallel $nthreads
+
+Sets the maximum number of AIO threads to C<$nthreads>. If more than
+the specified number of threads are currently running, kill them. This
+function blocks until the limit is reached.
+
+This module automatically runs C<max_parallel 0> at program end, to ensure
+that all threads are killed and that there are no outstanding requests.
+
+Under normal circumstances you don't need to call this function.
+
+=item $oldnreqs = IO::AIO::max_outstanding $nreqs
+
+Sets the maximum number of outstanding requests to C<$nreqs>. If you
+try to queue up more than this number of requests, the caller will block until
+some requests have been handled.
+
+The default is very large, so normally there is no practical limit. If you
+queue up many requests in a loop it it often improves speed if you set
+this to a relatively low number, such as C<100>.
+
+Under normal circumstances you don't need to call this function.
+
+=back
+
 =cut
 
 # support function to convert a fd into a perl filehandle
@@ -257,12 +291,6 @@ END {
 }
 
 1;
-
-=back
-
-=head1 BUGS
-
-   - could be optimized to use more semaphores instead of filehandles.
 
 =head1 SEE ALSO
 
