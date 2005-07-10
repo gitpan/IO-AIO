@@ -1,0 +1,5 @@
+Revision history for IO::AIO
+
+0.1
+	- cloned from Linux::AIO, which is very similar.
+
