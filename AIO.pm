@@ -51,11 +51,11 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 0.1;
+   $VERSION = 0.2;
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
                 aio_fsync aio_fdatasync aio_readahead);
-   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel nreqs);
+   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
 
    require XSLoader;
    XSLoader::load IO::AIO, $VERSION;
@@ -67,12 +67,14 @@ Set the minimum number of AIO threads to C<$nthreads>. The default is
 C<1>, which means a single asynchronous operation can be done at one time
 (the number of outstanding operations, however, is unlimited).
 
-It is recommended to keep the number of threads low, as some linux
+It is recommended to keep the number of threads low, as some Linux
 kernel versions will scale negatively with the number of threads (higher
-parallelity => MUCH higher latency).
+parallelity => MUCH higher latency). With current Linux 2.6 versions, 4-32
+threads should be fine.
 
 Under normal circumstances you don't need to call this function, as this
-module automatically starts a single async thread.
+module automatically starts some threads (the exact number might change,
+and is currently 4).
 
 =item IO::AIO::max_parallel $nthreads
 
@@ -82,6 +84,18 @@ function blocks until the limit is reached.
 
 This module automatically runs C<max_parallel 0> at program end, to ensure
 that all threads are killed and that there are no outstanding requests.
+
+Under normal circumstances you don't need to call this function.
+
+=item $oldnreqs = IO::AIO::max_outstanding $nreqs
+
+Sets the maximum number of outstanding requests to C<$nreqs>. If you
+try to queue up more than this number of requests, the caller will block until
+some requests have been handled.
+
+The default is very large, so normally there is no practical limit. If you
+queue up many requests in a loop it it often improves speed if you set
+this to a relatively low number, such as C<100>.
 
 Under normal circumstances you don't need to call this function.
 

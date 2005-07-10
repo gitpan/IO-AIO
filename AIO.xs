@@ -19,12 +19,10 @@ typedef void *InputStream;  /* hack, but 5.6.1 is simply toooo old ;) */
 typedef void *OutputStream; /* hack, but 5.6.1 is simply toooo old ;) */
 typedef void *InOutStream;  /* hack, but 5.6.1 is simply toooo old ;) */
 
-#if __i386 || __amd64
-# define STACKSIZE ( 256 * sizeof (long))
-#elif __ia64
-# define STACKSIZE (8192 * sizeof (long))
+#if __ia64
+# define STACKSIZE 65536
 #else
-# define STACKSIZE ( 512 * sizeof (long))
+# define STACKSIZE  4096
 #endif
 
 enum {
@@ -36,7 +34,7 @@ enum {
 };
 
 typedef struct aio_cb {
-  struct aio_cb *next;
+  struct aio_cb *volatile next;
 
   int type;
 
@@ -57,9 +55,119 @@ typedef aio_cb *aio_req;
 
 static int started;
 static int nreqs;
-static int reqpipe[2], respipe[2];
+static int max_outstanding = 1<<30;
+static int respipe [2];
 
-static aio_req qs, qe; /* queue start, queue end */
+static pthread_mutex_t reslock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t reqlock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  reqwait = PTHREAD_COND_INITIALIZER;
+
+static volatile aio_req reqs, reqe; /* queue start, queue end */
+static volatile aio_req ress, rese; /* queue start, queue end */
+
+static void
+poll_wait ()
+{
+  if (!nreqs)
+    return;
+
+  fd_set rfd;
+  FD_ZERO(&rfd);
+  FD_SET(respipe [0], &rfd);
+
+  select (respipe [0] + 1, &rfd, 0, 0, 0);
+}
+
+static int
+poll_cb (pTHX)
+{
+  dSP;
+  int count = 0;
+  aio_req req;
+  
+  {
+    /* read and signals sent by the worker threads */
+    char buf [32];
+    while (read (respipe [0], buf, 32) > 0)
+      ;
+  }
+
+  for (;;)
+    {
+      pthread_mutex_lock (&reslock);
+
+      req = ress;
+
+      if (ress)
+        {
+          ress = ress->next;
+          if (!ress) rese = 0;
+        }
+
+      pthread_mutex_unlock (&reslock);
+
+      if (!req)
+        break;
+
+      nreqs--;
+
+      if (req->type == REQ_QUIT)
+        started--;
+      else
+        {
+          int errorno = errno;
+          errno = req->errorno;
+
+          if (req->type == REQ_READ)
+            SvCUR_set (req->data, req->dataoffset
+                                  + req->result > 0 ? req->result : 0);
+
+          if (req->data)
+            SvREFCNT_dec (req->data);
+
+          if (req->type == REQ_STAT || req->type == REQ_LSTAT || req->type == REQ_FSTAT)
+            {
+              PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
+              PL_laststatval = req->result;
+              PL_statcache   = *(req->statdata);
+
+              Safefree (req->statdata);
+            }
+
+          PUSHMARK (SP);
+          XPUSHs (sv_2mortal (newSViv (req->result)));
+
+          if (req->type == REQ_OPEN)
+            {
+              /* convert fd to fh */
+              SV *fh;
+
+              PUTBACK;
+              call_pv ("IO::AIO::_fd2fh", G_SCALAR | G_EVAL);
+              SPAGAIN;
+
+              fh = POPs;
+
+              PUSHMARK (SP);
+              XPUSHs (fh);
+            }
+
+          PUTBACK;
+          call_sv (req->callback, G_VOID | G_EVAL);
+          SPAGAIN;
+          
+          if (req->callback)
+            SvREFCNT_dec (req->callback);
+
+          errno = errorno;
+          count++;
+        }
+
+      Safefree (req);
+    }
+
+  return count;
+}
 
 static void *aio_proc(void *arg);
 
@@ -84,31 +192,30 @@ start_thread (void)
 }
 
 static void
-send_reqs (void)
-{
-  /* this write is atomic */
-  while (qs && write (reqpipe[1], &qs, sizeof qs) == sizeof qs)
-   {
-     qs = qs->next;
-     if (!qs) qe = 0;
-   }
-}
-
-static void
 send_req (aio_req req)
 {
   nreqs++;
+
+  pthread_mutex_lock (&reqlock);
+
   req->next = 0;
 
-  if (qe)
+  if (reqe)
     {
-      qe->next = req;
-      qe = req;
+      reqe->next = req;
+      reqe = req;
     }
   else
-    qe = qs = req;
+    reqe = reqs = req;
 
-  send_reqs ();
+  pthread_cond_signal (&reqwait);
+  pthread_mutex_unlock (&reqlock);
+
+  while (nreqs > max_outstanding)
+    {
+      poll_wait ();
+      poll_cb ();
+    }
 }
 
 static void
@@ -170,99 +277,39 @@ read_write (pTHX_
   send_req (req);
 }
 
-static void
-poll_wait ()
-{
-  fd_set rfd;
-  FD_ZERO(&rfd);
-  FD_SET(respipe[0], &rfd);
-
-  select (respipe[0] + 1, &rfd, 0, 0, 0);
-}
-
-static int
-poll_cb (pTHX)
-{
-  dSP;
-  int count = 0;
-  aio_req req;
-
-  while (read (respipe[0], (void *)&req, sizeof (req)) == sizeof (req))
-    {
-      nreqs--;
-
-      if (req->type == REQ_QUIT)
-        started--;
-      else
-        {
-          int errorno = errno;
-          errno = req->errorno;
-
-          if (req->type == REQ_READ)
-            SvCUR_set (req->data, req->dataoffset
-                                  + req->result > 0 ? req->result : 0);
-
-          if (req->data)
-            SvREFCNT_dec (req->data);
-
-          if (req->type == REQ_STAT || req->type == REQ_LSTAT || req->type == REQ_FSTAT)
-            {
-              PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
-              PL_laststatval = req->result;
-              PL_statcache   = *(req->statdata);
-
-              Safefree (req->statdata);
-            }
-
-          PUSHMARK (SP);
-          XPUSHs (sv_2mortal (newSViv (req->result)));
-
-          if (req->type == REQ_OPEN)
-            {
-              /* convert fd to fh */
-              SV *fh;
-
-              PUTBACK;
-              call_pv ("IO::AIO::_fd2fh", G_SCALAR | G_EVAL);
-              SPAGAIN;
-
-              fh = POPs;
-
-              PUSHMARK (SP);
-              XPUSHs (fh);
-            }
-
-          PUTBACK;
-          call_sv (req->callback, G_VOID | G_EVAL);
-          SPAGAIN;
-          
-          if (req->callback)
-            SvREFCNT_dec (req->callback);
-
-          errno = errorno;
-          count++;
-        }
-
-      Safefree (req);
-    }
-
-  if (qs)
-    send_reqs ();
-
-  return count;
-}
-
 static void *
 aio_proc (void *thr_arg)
 {
   aio_req req;
+  int type;
 
-  /* then loop */
-  while (read (reqpipe[0], (void *)&req, sizeof (req)) == sizeof (req))
+  do
     {
+      pthread_mutex_lock (&reqlock);
+
+      for (;;)
+        {
+          req = reqs;
+
+          if (reqs)
+            {
+              reqs = reqs->next;
+              if (!reqs) reqe = 0;
+            }
+
+          if (req)
+            break;
+
+          pthread_cond_wait (&reqwait, &reqlock);
+        }
+
+      pthread_mutex_unlock (&reqlock);
+     
       errno = 0; /* strictly unnecessary */
 
-      switch (req->type)
+      type = req->type;
+
+      switch (type)
         {
           case REQ_READ:      req->result = pread64   (req->fd, req->dataptr, req->length, req->offset); break;
           case REQ_WRITE:     req->result = pwrite64  (req->fd, req->dataptr, req->length, req->offset); break;
@@ -284,8 +331,7 @@ aio_proc (void *thr_arg)
           case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
 
           case REQ_QUIT:
-            write (respipe[1], (void *)&req, sizeof (req));
-	    return 0;
+            break;
 
           default:
             req->result = ENOSYS;
@@ -293,8 +339,27 @@ aio_proc (void *thr_arg)
         }
 
       req->errorno = errno;
-      write (respipe[1], (void *)&req, sizeof (req));
+
+      pthread_mutex_lock (&reslock);
+
+      req->next = 0;
+
+      if (rese)
+        {
+          rese->next = req;
+          rese = req;
+        }
+      else
+        {
+          rese = ress = req;
+
+          /* write a dummy byte to the pipe so fh becomes ready */
+          write (respipe [1], &respipe, 1);
+        }
+
+      pthread_mutex_unlock (&reslock);
     }
+  while (type != REQ_QUIT);
 
   return 0;
 }
@@ -303,13 +368,13 @@ MODULE = IO::AIO                PACKAGE = IO::AIO
 
 BOOT:
 {
-        if (pipe (reqpipe) || pipe (respipe))
-          croak ("unable to initialize request or result pipe");
+        if (pipe (respipe))
+          croak ("unable to initialize result pipe");
 
-        if (fcntl (reqpipe[1], F_SETFL, O_NONBLOCK))
+        if (fcntl (respipe [0], F_SETFL, O_NONBLOCK))
           croak ("cannot set result pipe to nonblocking mode");
 
-        if (fcntl (respipe[0], F_SETFL, O_NONBLOCK))
+        if (fcntl (respipe [1], F_SETFL, O_NONBLOCK))
           croak ("cannot set result pipe to nonblocking mode");
 }
 
@@ -340,6 +405,14 @@ max_parallel(nthreads)
             poll_cb (aTHX);
           }
 }
+
+int
+max_outstanding(nreqs)
+	int nreqs
+        PROTOTYPE: $
+        CODE:
+        RETVAL = max_outstanding;
+        max_outstanding = nreqs;
 
 void
 aio_open(pathname,flags,mode,callback)
@@ -508,7 +581,7 @@ int
 poll_fileno()
 	PROTOTYPE:
 	CODE:
-        RETVAL = respipe[0];
+        RETVAL = respipe [0];
 	OUTPUT:
 	RETVAL
 
@@ -524,7 +597,8 @@ void
 poll_wait()
 	PROTOTYPE:
 	CODE:
-        poll_wait ();
+        if (nreqs)
+          poll_wait ();
 
 int
 nreqs()
