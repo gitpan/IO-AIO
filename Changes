@@ -1,5 +1,9 @@
 Revision history for IO::AIO
 
+0.4  Mon Jul 11 05:28:25 CEST 2005
+	- added IO::AIO::flush, IO::AIO::poll.
+        - make callback argument optional for all calls.
+
 0.3  Mon Jul 11 01:42:37 CEST 2005
 	- restructured manpage.
         - added SYNOPSIS with examples for Event, Glib, Tk.

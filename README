@@ -22,11 +22,15 @@ SYNOPSIS
 
      # Glib/Gtk2
      add_watch Glib::IO IO::AIO::poll_fileno,
-               \&IO::AIO::poll_cb;
+               in => sub { IO::AIO::poll_cb, 1 };
 
      # Tk
      Tk::Event::IO->fileevent (IO::AIO::poll_fileno, "",
                                readable => \&IO::AIO::poll_cb);
+
+     # Danga::Socket
+     Danga::Socket->AddOtherFds (IO::AIO::poll_fileno =>
+                                 \&IO::AIO::poll_cb);
 
 DESCRIPTION
     This module implements asynchronous I/O using whatever means your
@@ -49,11 +53,11 @@ FUNCTIONS
   AIO FUNCTIONS
     All the "aio_*" calls are more or less thin wrappers around the syscall
     with the same name (sans "aio_"). The arguments are similar or
-    identical, and they all accept an additional $callback argument which
-    must be a code reference. This code reference will get called with the
-    syscall return code (e.g. most syscalls return -1 on error, unlike perl,
-    which usually delivers "false") as it's sole argument when the given
-    syscall has been executed asynchronously.
+    identical, and they all accept an additional (and optional) $callback
+    argument which must be a code reference. This code reference will get
+    called with the syscall return code (e.g. most syscalls return -1 on
+    error, unlike perl, which usually delivers "false") as it's sole
+    argument when the given syscall has been executed asynchronously.
 
     All functions that expect a filehandle will also accept a file
     descriptor.
@@ -98,7 +102,7 @@ FUNCTIONS
         the callback without the actual number of bytes read (or -1 on
         error, just like the syscall).
 
-        Example: Read 15 bytes at offset 7 into scalar $buffer, strating at
+        Example: Read 15 bytes at offset 7 into scalar $buffer, starting at
         offset 0 within the scalar:
 
            aio_read $fh, 7, 15, $buffer, 0, sub {
@@ -108,8 +112,9 @@ FUNCTIONS
 
     aio_readahead $fh,$offset,$length, $callback
         Asynchronously reads the specified byte range into the page cache,
-        using the "readahead" syscall. If that syscall doesn't exist the
-        status will be -1 and $! is set to ENOSYS.
+        using the "readahead" syscall. If that syscall doesn't exist (likely
+        if your OS isn't Linux) the status will be -1 and $! is set to
+        ENOSYS.
 
         readahead() populates the page cache with data from a file so that
         subsequent reads from that file will not block on disk I/O. The
@@ -188,6 +193,22 @@ FUNCTIONS
 
            IO::AIO::poll_wait, IO::AIO::poll_cb
               while IO::AIO::nreqs;
+
+    IO::AIO::flush
+        Wait till all outstanding AIO requests have been handled.
+
+        Strictly equivalent to:
+
+           IO::AIO::poll_wait, IO::AIO::poll_cb
+              while IO::AIO::nreqs;
+
+    IO::AIO::poll
+        Waits until some requests have been handled.
+
+        Strictly equivalent to:
+
+           IO::AIO::poll_wait, IO::AIO::poll_cb
+              if IO::AIO::nreqs;
 
     IO::AIO::min_parallel $nthreads
         Set the minimum number of AIO threads to $nthreads. The default is

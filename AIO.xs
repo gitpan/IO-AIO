@@ -150,9 +150,12 @@ poll_cb ()
               XPUSHs (fh);
             }
 
-          PUTBACK;
-          call_sv (req->callback, G_VOID | G_EVAL);
-          SPAGAIN;
+          if (SvOK (req->callback))
+            {
+              PUTBACK;
+              call_sv (req->callback, G_VOID | G_EVAL);
+              SPAGAIN;
+            }
           
           if (req->callback)
             SvREFCNT_dec (req->callback);
@@ -363,6 +366,8 @@ aio_proc (void *thr_arg)
 
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
+PROTOTYPES: ENABLE
+
 BOOT:
 {
         if (pipe (respipe))
@@ -412,12 +417,12 @@ max_outstanding(nreqs)
         max_outstanding = nreqs;
 
 void
-aio_open(pathname,flags,mode,callback)
+aio_open(pathname,flags,mode,callback=&PL_sv_undef)
 	SV *	pathname
         int	flags
         int	mode
         SV *	callback
-	PROTOTYPE: $$$$
+	PROTOTYPE: $$$;$
 	CODE:
 {
         aio_req req;
@@ -438,10 +443,10 @@ aio_open(pathname,flags,mode,callback)
 }
 
 void
-aio_close(fh,callback)
+aio_close(fh,callback=&PL_sv_undef)
         InputStream	fh
         SV *		callback
-	PROTOTYPE: $$
+	PROTOTYPE: $;$
         ALIAS:
            aio_close     = REQ_CLOSE
            aio_fsync     = REQ_FSYNC
@@ -463,36 +468,36 @@ aio_close(fh,callback)
 }
 
 void
-aio_read(fh,offset,length,data,dataoffset,callback)
+aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
         InputStream	fh
         UV		offset
         IV		length
         SV *		data
         IV		dataoffset
         SV *		callback
-	PROTOTYPE: $$$$$$
+	PROTOTYPE: $$$$$;$
         CODE:
         read_write (0, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
 
 void
-aio_write(fh,offset,length,data,dataoffset,callback)
+aio_write(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
         OutputStream	fh
         UV		offset
         IV		length
         SV *		data
         IV		dataoffset
         SV *		callback
-	PROTOTYPE: $$$$$$
+	PROTOTYPE: $$$$$;$
         CODE:
         read_write (1, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
 
 void
-aio_readahead(fh,offset,length,callback)
+aio_readahead(fh,offset,length,callback=&PL_sv_undef)
         InputStream	fh
         UV		offset
         IV		length
         SV *		callback
-	PROTOTYPE: $$$$
+	PROTOTYPE: $$$;$
         CODE:
 {
         aio_req req;
@@ -515,12 +520,12 @@ aio_readahead(fh,offset,length,callback)
 }
 
 void
-aio_stat(fh_or_path,callback)
+aio_stat(fh_or_path,callback=&PL_sv_undef)
         SV *		fh_or_path
         SV *		callback
-	PROTOTYPE: $$
         ALIAS:
-           aio_lstat = 1
+           aio_stat  = REQ_STAT
+           aio_lstat = REQ_LSTAT
 	CODE:
 {
         aio_req req;
@@ -537,7 +542,7 @@ aio_stat(fh_or_path,callback)
 
         if (SvPOK (fh_or_path))
           {
-            req->type = ix ? REQ_LSTAT : REQ_STAT;
+            req->type = ix;
             req->data = newSVsv (fh_or_path);
             req->dataptr = SvPV_nolen (req->data);
           }
@@ -553,10 +558,9 @@ aio_stat(fh_or_path,callback)
 }
 
 void
-aio_unlink(pathname,callback)
+aio_unlink(pathname,callback=&PL_sv_undef)
 	SV * pathname
 	SV * callback
-	PROTOTYPE: $$
 	CODE:
 {
 	aio_req req;
@@ -573,6 +577,26 @@ aio_unlink(pathname,callback)
 	
 	send_req (req);
 }
+
+void
+flush()
+	PROTOTYPE:
+	CODE:
+        while (nreqs)
+          {
+            poll_wait ();
+            poll_cb ();
+          }
+
+void
+poll()
+	PROTOTYPE:
+	CODE:
+        if (nreqs)
+          {
+            poll_wait ();
+            poll_cb ();
+          }
 
 int
 poll_fileno()
