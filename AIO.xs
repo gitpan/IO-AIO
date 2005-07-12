@@ -8,7 +8,6 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sched.h>
-#include <endian.h>
 
 #include <pthread.h>
 #include <sys/syscall.h>

@@ -1,5 +1,11 @@
 Revision history for IO::AIO
 
+0.5  Tue Jul 12 13:03:09 CEST 2005
+	- removed #include <endian.h>, it's not portable, and we don't
+          need it anyway.
+        - link against -lrt, as it might contain goodies such as fdatasync,
+          and often aio_read, which we do not use yet, but it shouldn't hurt.
+
 0.4  Mon Jul 11 05:28:25 CEST 2005
 	- added IO::AIO::flush, IO::AIO::poll.
         - make callback argument optional for all calls.

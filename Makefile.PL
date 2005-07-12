@@ -10,7 +10,7 @@ my $mm = MM->new({
 	            },
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
-    LIBS         => ['-lpthread'],
+    LIBS         => ['-lpthread -lrt', '-lpthread', '-lpthreads', ''],
 });
 
 $mm->flush;
