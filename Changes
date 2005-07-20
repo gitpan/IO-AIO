@@ -1,5 +1,14 @@
 Revision history for IO::AIO
 
+0.9  Wed Jul 20 23:55:04 CEST 2005
+        - allow recursive calls to poll_cb, use less locking calls, too.
+        - fix the Gtk2-example in the SYNOPSIS.
+	- use pread/pwrite not pread64/pwrite64. this was simply a leftover
+          from Linux::AIO.
+          (found by compiling on cygwin. Unfortunately, cygwin declares but
+          does not implement pread/pwrite).
+	- only include <sys/syscall.h> on linux.
+
 0.5  Tue Jul 12 13:03:09 CEST 2005
 	- removed #include <endian.h>, it's not portable, and we don't
           need it anyway.

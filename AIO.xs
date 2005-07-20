@@ -1,16 +1,21 @@
+#define _XOPEN_SOURCE 500
+
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
+
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sched.h>
+#if __linux
+#include <sys/syscall.h>
+#endif
 
 #include <pthread.h>
-#include <sys/syscall.h>
 
 typedef void *InputStream;  /* hack, but 5.6.1 is simply toooo old ;) */
 typedef void *OutputStream; /* hack, but 5.6.1 is simply toooo old ;) */
@@ -51,7 +56,7 @@ typedef struct aio_cb {
 typedef aio_cb *aio_req;
 
 static int started;
-static int nreqs;
+static volatile int nreqs;
 static int max_outstanding = 1<<30;
 static int respipe [2];
 
@@ -65,14 +70,14 @@ static volatile aio_req ress, rese; /* queue start, queue end */
 static void
 poll_wait ()
 {
-  if (!nreqs)
-    return;
+  if (nreqs && !ress)
+    {
+      fd_set rfd;
+      FD_ZERO(&rfd);
+      FD_SET(respipe [0], &rfd);
 
-  fd_set rfd;
-  FD_ZERO(&rfd);
-  FD_SET(respipe [0], &rfd);
-
-  select (respipe [0] + 1, &rfd, 0, 0, 0);
+      select (respipe [0] + 1, &rfd, 0, 0, 0);
+    }
 }
 
 static int
@@ -80,33 +85,29 @@ poll_cb ()
 {
   dSP;
   int count = 0;
-  aio_req req;
-  
+  aio_req req, prv;
+
+  static int rl;//D
+  //printf ("%d ENTER\n", ++rl);//D
+
+  pthread_mutex_lock (&reslock);
+
   {
-    /* read and signals sent by the worker threads */
+    /* read any signals sent by the worker threads */
     char buf [32];
     while (read (respipe [0], buf, 32) > 0)
       ;
   }
 
-  for (;;)
+  req = ress;
+  ress = rese = 0;
+
+  pthread_mutex_unlock (&reslock);
+
+  while (req)
     {
-      pthread_mutex_lock (&reslock);
-
-      req = ress;
-
-      if (ress)
-        {
-          ress = ress->next;
-          if (!ress) rese = 0;
-        }
-
-      pthread_mutex_unlock (&reslock);
-
-      if (!req)
-        break;
-
       nreqs--;
+      //printf ("%d count %d %p->%p\n", rl, count, req, req->next);//D
 
       if (req->type == REQ_QUIT)
         started--;
@@ -163,9 +164,14 @@ poll_cb ()
           count++;
         }
 
-      Safefree (req);
+      prv = req;
+      req = req->next;
+      Safefree (prv);
+
+      /* TODO: croak on errors? */
     }
 
+  //printf ("%d LEAVE %p %p\n", rl--, ress, rese);//D
   return count;
 }
 
@@ -310,8 +316,8 @@ aio_proc (void *thr_arg)
 
       switch (type)
         {
-          case REQ_READ:      req->result = pread64   (req->fd, req->dataptr, req->length, req->offset); break;
-          case REQ_WRITE:     req->result = pwrite64  (req->fd, req->dataptr, req->length, req->offset); break;
+          case REQ_READ:      req->result = pread     (req->fd, req->dataptr, req->length, req->offset); break;
+          case REQ_WRITE:     req->result = pwrite    (req->fd, req->dataptr, req->length, req->offset); break;
 #if SYS_readahead
           case REQ_READAHEAD: req->result = readahead (req->fd, req->offset, req->length); break;
 #else
