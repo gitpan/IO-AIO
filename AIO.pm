@@ -58,12 +58,14 @@ C<aio_> functions) recursively.
 
 package IO::AIO;
 
+no warnings;
+
 use base 'Exporter';
 
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 0.9;
+   $VERSION = '1.0';
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
                 aio_fsync aio_fdatasync aio_readahead);
@@ -85,7 +87,8 @@ the syscall return code (e.g. most syscalls return C<-1> on error, unlike
 perl, which usually delivers "false") as it's sole argument when the given
 syscall has been executed asynchronously.
 
-All functions that expect a filehandle will also accept a file descriptor.
+All functions expecting a filehandle keep a copy of the filehandle
+internally until the request has finished.
 
 The filenames you pass to these routines I<must> be absolute. The reason
 for this is that at the time the request is being executed, the current
@@ -312,12 +315,13 @@ Under normal circumstances you don't need to call this function.
 sub _fd2fh {
    return undef if $_[0] < 0;
 
-   # try to be perl5.6-compatible
-   local *AIO_FH;
-   open AIO_FH, "+<&=$_[0]"
+   # try to generate nice filehandles
+   my $sym = "IO::AIO::fd#$_[0]";
+   local *$sym;
+   open *$sym, "+<&=$_[0]"
       or return undef;
 
-   *AIO_FH
+   *$sym
 }
 
 min_parallel 4;

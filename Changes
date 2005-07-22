@@ -1,5 +1,11 @@
 Revision history for IO::AIO
 
+1.0  Fri Jul 22 10:43:30 CEST 2005
+        - aio_open did not reliably deliver (open) filehandles.
+        - all aio_*-functions keep a reference to the filehandle so
+          it doesn't go away while the aio requests is working on it.
+	- disable warnings in AIO.pm.
+
 0.9  Wed Jul 20 23:55:04 CEST 2005
         - allow recursive calls to poll_cb, use less locking calls, too.
         - fix the Gtk2-example in the SYNOPSIS.

@@ -61,8 +61,8 @@ FUNCTIONS
     error, unlike perl, which usually delivers "false") as it's sole
     argument when the given syscall has been executed asynchronously.
 
-    All functions that expect a filehandle will also accept a file
-    descriptor.
+    All functions expecting a filehandle keep a copy of the filehandle
+    internally until the request has finished.
 
     The filenames you pass to these routines *must* be absolute. The reason
     for this is that at the time the request is being executed, the current

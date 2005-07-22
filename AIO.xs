@@ -46,7 +46,7 @@ typedef struct aio_cb {
   ssize_t result;
   mode_t mode; /* open */
   int errorno;
-  SV *data, *callback;
+  SV *data, *callback, *fh;
   void *dataptr;
   STRLEN dataoffset;
 
@@ -87,9 +87,6 @@ poll_cb ()
   int count = 0;
   aio_req req, prv;
 
-  static int rl;//D
-  //printf ("%d ENTER\n", ++rl);//D
-
   pthread_mutex_lock (&reslock);
 
   {
@@ -107,7 +104,6 @@ poll_cb ()
   while (req)
     {
       nreqs--;
-      //printf ("%d count %d %p->%p\n", rl, count, req, req->next);//D
 
       if (req->type == REQ_QUIT)
         started--;
@@ -123,6 +119,9 @@ poll_cb ()
           if (req->data)
             SvREFCNT_dec (req->data);
 
+          if (req->fh)
+            SvREFCNT_dec (req->fh);
+
           if (req->type == REQ_STAT || req->type == REQ_LSTAT || req->type == REQ_FSTAT)
             {
               PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
@@ -132,6 +131,7 @@ poll_cb ()
               Safefree (req->statdata);
             }
 
+          ENTER;
           PUSHMARK (SP);
           XPUSHs (sv_2mortal (newSViv (req->result)));
 
@@ -144,10 +144,10 @@ poll_cb ()
               call_pv ("IO::AIO::_fd2fh", G_SCALAR | G_EVAL);
               SPAGAIN;
 
-              fh = POPs;
+              fh = SvREFCNT_inc (POPs);
 
               PUSHMARK (SP);
-              XPUSHs (fh);
+              XPUSHs (sv_2mortal (fh));
             }
 
           if (SvOK (req->callback))
@@ -156,6 +156,8 @@ poll_cb ()
               call_sv (req->callback, G_VOID | G_EVAL);
               SPAGAIN;
             }
+
+          LEAVE;
           
           if (req->callback)
             SvREFCNT_dec (req->callback);
@@ -171,7 +173,6 @@ poll_cb ()
       /* TODO: croak on errors? */
     }
 
-  //printf ("%d LEAVE %p %p\n", rl--, ress, rese);//D
   return count;
 }
 
@@ -230,54 +231,6 @@ end_thread (void)
   aio_req req;
   New (0, req, 1, aio_cb);
   req->type = REQ_QUIT;
-
-  send_req (req);
-}
-
-static void
-read_write (int dowrite, int fd, off_t offset, size_t length,
-            SV *data, STRLEN dataoffset, SV *callback)
-{
-  aio_req req;
-  STRLEN svlen;
-  char *svptr = SvPV (data, svlen);
-
-  SvUPGRADE (data, SVt_PV);
-  SvPOK_on (data);
-
-  if (dataoffset < 0)
-    dataoffset += svlen;
-
-  if (dataoffset < 0 || dataoffset > svlen)
-    croak ("data offset outside of string");
-
-  if (dowrite)
-    {
-      /* write: check length and adjust. */
-      if (length < 0 || length + dataoffset > svlen)
-        length = svlen - dataoffset;
-    }
-  else
-    {
-      /* read: grow scalar as necessary */
-      svptr = SvGROW (data, length + dataoffset);
-    }
-
-  if (length < 0)
-    croak ("length must not be negative");
-
-  Newz (0, req, 1, aio_cb);
-
-  if (!req)
-    croak ("out of memory during aio_req allocation");
-
-  req->type = dowrite ? REQ_WRITE : REQ_READ;
-  req->fd = fd;
-  req->offset = offset;
-  req->length = length;
-  req->data = SvREFCNT_inc (data);
-  req->dataptr = (char *)svptr + dataoffset;
-  req->callback = SvREFCNT_inc (callback);
 
   send_req (req);
 }
@@ -449,8 +402,8 @@ aio_open(pathname,flags,mode,callback=&PL_sv_undef)
 
 void
 aio_close(fh,callback=&PL_sv_undef)
-        InputStream	fh
-        SV *		callback
+	SV *	fh
+        SV *	callback
 	PROTOTYPE: $;$
         ALIAS:
            aio_close     = REQ_CLOSE
@@ -466,7 +419,8 @@ aio_close(fh,callback=&PL_sv_undef)
           croak ("out of memory during aio_req allocation");
 
         req->type = ix;
-        req->fd = PerlIO_fileno (fh);
+        req->fh = newSVsv (fh);
+        req->fd = PerlIO_fileno (IoIFP (sv_2io (fh)));
         req->callback = SvREFCNT_inc (callback);
 
         send_req (req);
@@ -474,34 +428,70 @@ aio_close(fh,callback=&PL_sv_undef)
 
 void
 aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
-        InputStream	fh
-        UV		offset
-        IV		length
-        SV *		data
-        IV		dataoffset
-        SV *		callback
+	SV *	fh
+        UV	offset
+        IV	length
+        SV *	data
+        IV	dataoffset
+        SV *	callback
+        ALIAS:
+           aio_read  = REQ_READ
+           aio_write = REQ_WRITE
 	PROTOTYPE: $$$$$;$
         CODE:
-        read_write (0, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
+{
+        aio_req req;
+        STRLEN svlen;
+        char *svptr = SvPV (data, svlen);
 
-void
-aio_write(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
-        OutputStream	fh
-        UV		offset
-        IV		length
-        SV *		data
-        IV		dataoffset
-        SV *		callback
-	PROTOTYPE: $$$$$;$
-        CODE:
-        read_write (1, PerlIO_fileno (fh), offset, length, data, dataoffset, callback);
+        SvUPGRADE (data, SVt_PV);
+        SvPOK_on (data);
+
+        if (dataoffset < 0)
+          dataoffset += svlen;
+
+        if (dataoffset < 0 || dataoffset > svlen)
+          croak ("data offset outside of string");
+
+        if (ix == REQ_WRITE)
+          {
+            /* write: check length and adjust. */
+            if (length < 0 || length + dataoffset > svlen)
+              length = svlen - dataoffset;
+          }
+        else
+          {
+            /* read: grow scalar as necessary */
+            svptr = SvGROW (data, length + dataoffset);
+          }
+
+        if (length < 0)
+          croak ("length must not be negative");
+
+        Newz (0, req, 1, aio_cb);
+
+        if (!req)
+          croak ("out of memory during aio_req allocation");
+
+        req->type = ix;
+        req->fh = newSVsv (fh);
+        req->fd = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
+                                                : IoOFP (sv_2io (fh)));
+        req->offset = offset;
+        req->length = length;
+        req->data = SvREFCNT_inc (data);
+        req->dataptr = (char *)svptr + dataoffset;
+        req->callback = SvREFCNT_inc (callback);
+
+        send_req (req);
+}
 
 void
 aio_readahead(fh,offset,length,callback=&PL_sv_undef)
-        InputStream	fh
-        UV		offset
-        IV		length
-        SV *		callback
+        SV *	fh
+        UV	offset
+        IV	length
+        SV *	callback
 	PROTOTYPE: $$$;$
         CODE:
 {
@@ -516,7 +506,8 @@ aio_readahead(fh,offset,length,callback=&PL_sv_undef)
           croak ("out of memory during aio_req allocation");
 
         req->type = REQ_READAHEAD;
-        req->fd = PerlIO_fileno (fh);
+        req->fh = newSVsv (fh);
+        req->fd = PerlIO_fileno (IoIFP (sv_2io (fh)));
         req->offset = offset;
         req->length = length;
         req->callback = SvREFCNT_inc (callback);
@@ -554,6 +545,7 @@ aio_stat(fh_or_path,callback=&PL_sv_undef)
         else
           {
             req->type = REQ_FSTAT;
+            req->fh = newSVsv (fh_or_path);
             req->fd = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
