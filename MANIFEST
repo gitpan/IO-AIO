@@ -8,4 +8,11 @@ AIO.xs
 t/00_load.t
 t/01_stat.t
 t/02_read.t
+t/03_errors.t
+t/aio_test_common.pm
+genac
+autoconf.pm
+autoconf/configure.ac
+autoconf/configure
+autoconf/config.h.in
 META.yml                                 Module meta-data (added by MakeMaker)

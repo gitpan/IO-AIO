@@ -65,7 +65,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = '1.0';
+   $VERSION = 1.1;
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
                 aio_fsync aio_fdatasync aio_readahead);
@@ -318,7 +318,10 @@ sub _fd2fh {
    # try to generate nice filehandles
    my $sym = "IO::AIO::fd#$_[0]";
    local *$sym;
-   open *$sym, "+<&=$_[0]"
+
+   open *$sym, "+<&$_[0]"      # usually under any unix
+      or open *$sym, "<&$_[0]" # cygwin needs this
+      or open *$sym, ">&$_[0]" # cygwin needs this
       or return undef;
 
    *$sym

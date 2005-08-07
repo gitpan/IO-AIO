@@ -1,0 +1,3 @@
+cd autoconf || exit 69
+autoconf
+autoheader

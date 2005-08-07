@@ -1,8 +1,11 @@
-#define _XOPEN_SOURCE 500
+#define _REENTRANT 1
+#include <errno.h>
 
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
+
+#include "autoconf/config.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -11,9 +14,6 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sched.h>
-#if __linux
-#include <sys/syscall.h>
-#endif
 
 #include <pthread.h>
 
@@ -235,6 +235,77 @@ end_thread (void)
   send_req (req);
 }
 
+/* work around various missing functions */
+
+#if !HAVE_PREADWRITE
+# define pread  aio_pread
+# define pwrite aio_pwrite
+
+/*
+ * make our pread/pwrite safe against themselves, but not against
+ * normal read/write by using a mutex. slows down execution a lot,
+ * but that's your problem, not mine.
+ */
+static pthread_mutex_t iolock = PTHREAD_MUTEX_INITIALIZER;
+
+static ssize_t
+pread (int fd, void *buf, size_t count, off_t offset)
+{
+  ssize_t res;
+  off_t ooffset;
+
+  pthread_mutex_lock (&iolock);
+  ooffset = lseek (fd, 0, SEEK_CUR);
+  lseek (fd, offset, SEEK_SET);
+  res = read (fd, buf, count);
+  lseek (fd, ooffset, SEEK_SET);
+  pthread_mutex_unlock (&iolock);
+
+  return res;
+}
+
+static ssize_t
+pwrite (int fd, void *buf, size_t count, off_t offset)
+{
+  ssize_t res;
+  off_t ooffset;
+
+  pthread_mutex_lock (&iolock);
+  ooffset = lseek (fd, 0, SEEK_CUR);
+  lseek (fd, offset, SEEK_SET);
+  res = write (fd, buf, count);
+  lseek (fd, offset, SEEK_SET);
+  pthread_mutex_unlock (&iolock);
+
+  return res;
+}
+#endif
+
+#if !HAVE_FDATASYNC
+# define fdatasync fsync
+#endif
+
+#if !HAVE_READAHEAD
+# define readahead aio_readahead
+
+static char readahead_buf[4096];
+
+static ssize_t
+readahead (int fd, off_t offset, size_t count)
+{
+  while (count > 0)
+    {
+      size_t len = count < sizeof (readahead_buf) ? count : sizeof (readahead_buf);
+
+      pread (fd, readahead_buf, len, offset);
+      offset += len;
+      count  -= len;
+    }
+
+  errno = 0;
+}
+#endif
+
 static void *
 aio_proc (void *thr_arg)
 {
@@ -271,11 +342,8 @@ aio_proc (void *thr_arg)
         {
           case REQ_READ:      req->result = pread     (req->fd, req->dataptr, req->length, req->offset); break;
           case REQ_WRITE:     req->result = pwrite    (req->fd, req->dataptr, req->length, req->offset); break;
-#if SYS_readahead
+
           case REQ_READAHEAD: req->result = readahead (req->fd, req->offset, req->length); break;
-#else
-          case REQ_READAHEAD: req->result = -1; errno = ENOSYS; break;
-#endif
 
           case REQ_STAT:      req->result = stat      (req->dataptr, req->statdata); break;
           case REQ_LSTAT:     req->result = lstat     (req->dataptr, req->statdata); break;
@@ -285,8 +353,8 @@ aio_proc (void *thr_arg)
           case REQ_CLOSE:     req->result = close     (req->fd); break;
           case REQ_UNLINK:    req->result = unlink    (req->dataptr); break;
 
-          case REQ_FSYNC:     req->result = fsync     (req->fd); break;
           case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
+          case REQ_FSYNC:     req->result = fsync     (req->fd); break;
 
           case REQ_QUIT:
             break;
@@ -442,7 +510,7 @@ aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 {
         aio_req req;
         STRLEN svlen;
-        char *svptr = SvPV (data, svlen);
+        char *svptr = SvPVbyte (data, svlen);
 
         SvUPGRADE (data, SVt_PV);
         SvPOK_on (data);

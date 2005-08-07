@@ -1,5 +1,22 @@
 Revision history for IO::AIO
 
+1.1  Sun Aug  7 05:27:23 CEST 2005
+	- added configure script to detect availability of some calls.
+          (imperfect, as we cannot detect things like -lrt due to missing
+          feedback yet).
+        - emulate fdatasync via fsync, pread/pwrite via unsafe read/write
+          and readahead via manual reading on platforms lacking those.
+	- ported t/03_errors.t+framework by Brad Fitzpatrick
+          from Linux::AIO.
+	- removed XOPEN_SOURCE because stupid solaris 9 doesn't
+          compile with it enabled. Probably breaks others. Oh well.
+        - try to be more careful with errno on non-threaded perls.
+        - cygwins perl insisted on a matching open mode when morphing
+          the fd to an fh.
+        - convert sv's to "byte" encoding in aio_read/aio_write. Might
+          do that for pathnames, too, in the future, so make sure you
+          properly encode your pathnames.
+
 1.0  Fri Jul 22 10:43:30 CEST 2005
         - aio_open did not reliably deliver (open) filehandles.
         - all aio_*-functions keep a reference to the filehandle so
