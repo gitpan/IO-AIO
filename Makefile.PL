@@ -4,6 +4,22 @@ use Config;
 
 require "autoconf.pm";
 
+if ($^O =~ /freebsd/i) {
+   print <<EOF;
+
+This package seems to deadlock under FreeBSD. As documentation on FreeBSD
+threading is sorely lacking and confusing, I'll just call FreeBSD broken
+with regards to threading.
+
+If you get it to work, tell me how (maybe you need to specify magical link
+flags despite man pthread telling me otherwise, maybe yo need special
+library, maybe you need magical preprocessor symbols, maybe you need to
+recompile or re-link perl with threads enabled (a bad idea) - I have no
+idea, and I no longer care).
+
+EOF
+}
+
 autoconf::run_script();
 
 my $mm = MM->new({

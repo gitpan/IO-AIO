@@ -64,10 +64,18 @@ FUNCTIONS
     All functions expecting a filehandle keep a copy of the filehandle
     internally until the request has finished.
 
-    The filenames you pass to these routines *must* be absolute. The reason
-    for this is that at the time the request is being executed, the current
-    working directory could have changed. Alternatively, you can make sure
-    that you never change the current working directory.
+    The pathnames you pass to these routines *must* be absolute and encoded
+    in byte form. The reason for the former is that at the time the request
+    is being executed, the current working directory could have changed.
+    Alternatively, you can make sure that you never change the current
+    working directory.
+
+    To encode pathnames to byte form, either make sure you either: a) always
+    pass in filenames you got from outside (command line, readdir etc.), b)
+    are ASCII or ISO 8859-1, c) use the Encode module and encode your
+    pathnames to the locale (or other) encoding in effect in the user
+    environment, d) use Glib::filename_from_unicode on unicode filenames or
+    e) use something else.
 
     aio_open $pathname, $flags, $mode, $callback
         Asynchronously open or create a file and call the callback with a
@@ -121,11 +129,6 @@ FUNCTIONS
            };
 
     aio_readahead $fh,$offset,$length, $callback
-        Asynchronously reads the specified byte range into the page cache,
-        using the "readahead" syscall. If that syscall doesn't exist (likely
-        if your OS isn't Linux) the status will be -1 and $! is set to
-        "ENOSYS".
-
         "aio_readahead" populates the page cache with data from a file so
         that subsequent reads from that file will not block on disk I/O. The
         $offset argument specifies the starting point from which data is to
@@ -135,6 +138,10 @@ FUNCTIONS
         greater than or equal to (off-set+length). "aio_readahead" does not
         read beyond the end of the file. The current file offset of the file
         is left unchanged.
+
+        If that syscall doesn't exist (likely if your OS isn't Linux) it
+        will be emulated by simply reading the data, which would have a
+        similar effect.
 
     aio_stat $fh_or_path, $callback
     aio_lstat $fh, $callback
@@ -161,14 +168,20 @@ FUNCTIONS
         Asynchronously unlink (delete) a file and call the callback with the
         result code.
 
+    aio_rmdir $pathname, $callback
+        Asynchronously rmdir (delete) a directory and call the callback with
+        the result code.
+
     aio_fsync $fh, $callback
         Asynchronously call fsync on the given filehandle and call the
         callback with the fsync result code.
 
     aio_fdatasync $fh, $callback
         Asynchronously call fdatasync on the given filehandle and call the
-        callback with the fdatasync result code. Might set $! to "ENOSYS" if
-        "fdatasync" is not available.
+        callback with the fdatasync result code.
+
+        If this call isn't available because your OS lacks it or it couldn't
+        be detected, it will be emulated by calling "fsync" instead.
 
   SUPPORT FUNCTIONS
     $fileno = IO::AIO::poll_fileno
@@ -258,6 +271,11 @@ FUNCTIONS
         if you set this to a relatively low number, such as 100.
 
         Under normal circumstances you don't need to call this function.
+
+  FORK BEHAVIOUR
+    IO::AIO handles all outstanding AIO requests before the fork, destroys
+    all AIO threads, and recreates them in both the parent and the child
+    after the fork.
 
 SEE ALSO
     Coro, Linux::AIO.

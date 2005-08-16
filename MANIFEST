@@ -9,6 +9,7 @@ t/00_load.t
 t/01_stat.t
 t/02_read.t
 t/03_errors.t
+t/04_fork.t
 t/aio_test_common.pm
 genac
 autoconf.pm

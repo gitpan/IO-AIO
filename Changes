@@ -1,5 +1,19 @@
 Revision history for IO::AIO
 
+1.2  Wed Aug 17 01:22:58 CEST 2005
+	- verified on cygwin, linux/amd64+ia32+alpha, solaris.
+        - use SvPVbyte for filenames now. You *need* to encode your strings to
+          the external filename encoding first.
+	- fix the bug where filehandles could leak (again).
+        - clarify freebsd situation: make it work and tell me how, or go away
+          with your underdocumented, broken and outdated OS.
+        - fork'ing should now be officially supported (where linux and
+          posix contradict each other, I followed posix).
+        - only call read() once per poll, not twice (speedup).
+        - new functions: aio_rmdir, aio_symlink.
+        - force callback arguments to be undef or a reference, for better
+          error catching.
+
 1.1  Sun Aug  7 05:27:23 CEST 2005
 	- added configure script to detect availability of some calls.
           (imperfect, as we cannot detect things like -lrt due to missing

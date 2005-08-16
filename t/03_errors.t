@@ -7,14 +7,15 @@ use FindBin;
 use lib "$FindBin::Bin";
 use aio_test_common;
 
-BEGIN { plan tests => 9 }
+BEGIN { plan tests => 13 }
 
 IO::AIO::min_parallel 2;
 
 my $tempdir = tempdir();
 
-my $some_dir  = "$tempdir/some_dir/";
+my $some_dir  = "$tempdir/some_dir";
 my $some_file = "$some_dir/some_file";
+my $some_link = "$some_dir/some_link";
 
 # create a file in a non-existent directory
 aio_open $some_file, O_RDWR|O_CREAT|O_TRUNC, 0, sub {
@@ -28,12 +29,12 @@ aio_open $some_file, O_RDWR|O_CREAT|O_TRUNC, 0644, sub {
     my $fh = shift;
     ok(defined $fh);
     print $fh "contents.";
-    close $fh;
     ok(-e $some_file);
+    close $fh;
 };
 pcb;
 
-# test error on unlinking non-empty directory
+# test error on unlinking nonexistent file
 aio_unlink "$some_dir/notfound.txt", sub {
     ok($_[0] < 0);
     ok($! == ENOENT);
@@ -47,7 +48,25 @@ aio_write *F, 0, 10, "foobarbaz.", 0, sub {
     ok($written < 0);
     ok($! == EBADF);
 };
+pcb;
 
+close F;
+
+aio_symlink "\\test\\", $some_link, sub {
+   ok (!$_[0]);
+   ok ("\\test\\" eq readlink $some_link);
+};
+pcb;
+unlink $some_link;
+
+# test unlinking and rmdir, also test order of these
+aio_unlink $some_file, sub {
+   ok (!shift);
+};
+aio_rmdir $some_dir, sub {
+   ok (!shift);
+};
+pcb;
 
 
 

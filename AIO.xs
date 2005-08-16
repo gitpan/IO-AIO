@@ -31,8 +31,10 @@ enum {
   REQ_QUIT,
   REQ_OPEN, REQ_CLOSE,
   REQ_READ, REQ_WRITE, REQ_READAHEAD,
-  REQ_STAT, REQ_LSTAT, REQ_FSTAT, REQ_UNLINK,
+  REQ_STAT, REQ_LSTAT, REQ_FSTAT,
   REQ_FSYNC, REQ_FDATASYNC,
+  REQ_UNLINK, REQ_RMDIR,
+  REQ_SYMLINK,
 };
 
 typedef struct aio_cb {
@@ -47,7 +49,7 @@ typedef struct aio_cb {
   mode_t mode; /* open */
   int errorno;
   SV *data, *callback, *fh;
-  void *dataptr;
+  void *dataptr, *data2ptr;
   STRLEN dataoffset;
 
   Stat_t *statdata;
@@ -62,6 +64,7 @@ static int respipe [2];
 
 static pthread_mutex_t reslock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t reqlock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t frklock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  reqwait = PTHREAD_COND_INITIALIZER;
 
 static volatile aio_req reqs, reqe; /* queue start, queue end */
@@ -92,7 +95,7 @@ poll_cb ()
   {
     /* read any signals sent by the worker threads */
     char buf [32];
-    while (read (respipe [0], buf, 32) > 0)
+    while (read (respipe [0], buf, 32) == 32)
       ;
   }
 
@@ -235,6 +238,80 @@ end_thread (void)
   send_req (req);
 }
 
+
+static void min_parallel (int nthreads)
+{
+  while (nthreads > started)
+    start_thread ();
+}
+
+static void max_parallel (int nthreads)
+{
+  int cur = started;
+  while (cur > nthreads)
+    {          
+      end_thread ();
+      cur--;
+    }
+
+  while (started > nthreads)
+    {
+      poll_wait ();
+      poll_cb ();
+    }
+}
+
+static int fork_started;
+
+static void atfork_prepare (void)
+{
+  pthread_mutex_lock (&frklock);
+
+  fork_started = started;
+
+  for (;;) {
+    while (nreqs)
+      {
+        poll_wait ();
+        poll_cb ();
+      }
+
+    max_parallel (0);
+  
+    pthread_mutex_lock (&reqlock);
+
+    if (!nreqs && !started)
+      break;
+
+    pthread_mutex_unlock (&reqlock);
+
+    min_parallel (fork_started);
+  }
+
+  pthread_mutex_lock (&reslock);
+
+  assert (!started);
+  assert (!nreqs);
+  assert (!reqs && !reqe);
+  assert (!ress && !rese);
+}
+
+static void atfork_parent (void)
+{
+  pthread_mutex_unlock (&reslock);
+  min_parallel (fork_started);
+  pthread_mutex_unlock (&reqlock);
+  pthread_mutex_unlock (&frklock);
+}
+
+static void atfork_child (void)
+{
+  reqs = reqe = 0;
+
+  atfork_parent ();
+}
+
+/*****************************************************************************/
 /* work around various missing functions */
 
 #if !HAVE_PREADWRITE
@@ -306,6 +383,8 @@ readahead (int fd, off_t offset, size_t count)
 }
 #endif
 
+/*****************************************************************************/
+
 static void *
 aio_proc (void *thr_arg)
 {
@@ -352,6 +431,8 @@ aio_proc (void *thr_arg)
           case REQ_OPEN:      req->result = open      (req->dataptr, req->fd, req->mode); break;
           case REQ_CLOSE:     req->result = close     (req->fd); break;
           case REQ_UNLINK:    req->result = unlink    (req->dataptr); break;
+          case REQ_RMDIR:     req->result = rmdir     (req->dataptr); break;
+          case REQ_SYMLINK:   req->result = symlink   (req->data2ptr, req->dataptr); break;
 
           case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
           case REQ_FSYNC:     req->result = fsync     (req->fd); break;
@@ -390,6 +471,18 @@ aio_proc (void *thr_arg)
   return 0;
 }
 
+#define dREQ							\
+  aio_req req;							\
+								\
+  if (SvOK (callback) && !SvROK (callback))			\
+    croak ("clalback must be undef or of reference type");	\
+								\
+  Newz (0, req, 1, aio_cb);					\
+  if (!req)							\
+    croak ("out of memory during aio_req allocation");		\
+								\
+  req->callback = SvREFCNT_inc (callback);
+	
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
 PROTOTYPES: ENABLE
@@ -404,35 +497,19 @@ BOOT:
 
         if (fcntl (respipe [1], F_SETFL, O_NONBLOCK))
           croak ("cannot set result pipe to nonblocking mode");
+
+        pthread_atfork (atfork_prepare, atfork_parent, atfork_child);
 }
 
 void
 min_parallel(nthreads)
 	int	nthreads
 	PROTOTYPE: $
-        CODE:
-        while (nthreads > started)
-          start_thread ();
 
 void
 max_parallel(nthreads)
 	int	nthreads
 	PROTOTYPE: $
-        CODE:
-{
-        int cur = started;
-        while (cur > nthreads)
-          {          
-            end_thread ();
-            cur--;
-          }
-
-        while (started > nthreads)
-          {
-            poll_wait ();
-            poll_cb ();
-          }
-}
 
 int
 max_outstanding(nreqs)
@@ -451,19 +528,13 @@ aio_open(pathname,flags,mode,callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
 	CODE:
 {
-        aio_req req;
-
-        Newz (0, req, 1, aio_cb);
-
-        if (!req)
-          croak ("out of memory during aio_req allocation");
+        dREQ;
 
         req->type = REQ_OPEN;
         req->data = newSVsv (pathname);
-        req->dataptr = SvPV_nolen (req->data);
+        req->dataptr = SvPVbyte_nolen (req->data);
         req->fd = flags;
         req->mode = mode;
-        req->callback = SvREFCNT_inc (callback);
 
         send_req (req);
 }
@@ -479,17 +550,11 @@ aio_close(fh,callback=&PL_sv_undef)
            aio_fdatasync = REQ_FDATASYNC
 	CODE:
 {
-        aio_req req;
-
-        Newz (0, req, 1, aio_cb);
-
-        if (!req)
-          croak ("out of memory during aio_req allocation");
+        dREQ;
 
         req->type = ix;
         req->fh = newSVsv (fh);
         req->fd = PerlIO_fileno (IoIFP (sv_2io (fh)));
-        req->callback = SvREFCNT_inc (callback);
 
         send_req (req);
 }
@@ -536,22 +601,21 @@ aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
         if (length < 0)
           croak ("length must not be negative");
 
-        Newz (0, req, 1, aio_cb);
+        {
+          dREQ;
 
-        if (!req)
-          croak ("out of memory during aio_req allocation");
+          req->type = ix;
+          req->fh = newSVsv (fh);
+          req->fd = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
+                                                  : IoOFP (sv_2io (fh)));
+          req->offset = offset;
+          req->length = length;
+          req->data = SvREFCNT_inc (data);
+          req->dataptr = (char *)svptr + dataoffset;
+          req->callback = SvREFCNT_inc (callback);
 
-        req->type = ix;
-        req->fh = newSVsv (fh);
-        req->fd = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
-                                                : IoOFP (sv_2io (fh)));
-        req->offset = offset;
-        req->length = length;
-        req->data = SvREFCNT_inc (data);
-        req->dataptr = (char *)svptr + dataoffset;
-        req->callback = SvREFCNT_inc (callback);
-
-        send_req (req);
+          send_req (req);
+        }
 }
 
 void
@@ -563,22 +627,13 @@ aio_readahead(fh,offset,length,callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
         CODE:
 {
-        aio_req req;
-
-        if (length < 0)
-          croak ("length must not be negative");
-
-        Newz (0, req, 1, aio_cb);
-
-        if (!req)
-          croak ("out of memory during aio_req allocation");
+	dREQ;
 
         req->type = REQ_READAHEAD;
         req->fh = newSVsv (fh);
         req->fd = PerlIO_fileno (IoIFP (sv_2io (fh)));
         req->offset = offset;
         req->length = length;
-        req->callback = SvREFCNT_inc (callback);
 
         send_req (req);
 }
@@ -592,23 +647,17 @@ aio_stat(fh_or_path,callback=&PL_sv_undef)
            aio_lstat = REQ_LSTAT
 	CODE:
 {
-        aio_req req;
-
-        Newz (0, req, 1, aio_cb);
-
-        if (!req)
-          croak ("out of memory during aio_req allocation");
+	dREQ;
 
         New (0, req->statdata, 1, Stat_t);
-
         if (!req->statdata)
-          croak ("out of memory during aio_req->statdata allocation");
+          croak ("out of memory during aio_req->statdata allocation (sorry, i just leaked memory, too)");
 
         if (SvPOK (fh_or_path))
           {
             req->type = ix;
             req->data = newSVsv (fh_or_path);
-            req->dataptr = SvPV_nolen (req->data);
+            req->dataptr = SvPVbyte_nolen (req->data);
           }
         else
           {
@@ -617,8 +666,6 @@ aio_stat(fh_or_path,callback=&PL_sv_undef)
             req->fd = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
-        req->callback = SvREFCNT_inc (callback);
-
         send_req (req);
 }
 
@@ -626,19 +673,34 @@ void
 aio_unlink(pathname,callback=&PL_sv_undef)
 	SV * pathname
 	SV * callback
+        ALIAS:
+           aio_unlink = REQ_UNLINK
+           aio_rmdir  = REQ_RMDIR
 	CODE:
 {
-	aio_req req;
+	dREQ;
 	
-	Newz (0, req, 1, aio_cb);
-	
-	if (!req)
-	  croak ("out of memory during aio_req allocation");
-	
-	req->type = REQ_UNLINK;
+        req->type = ix;
 	req->data = newSVsv (pathname);
-	req->dataptr = SvPV_nolen (req->data);
-	req->callback = SvREFCNT_inc (callback);
+	req->dataptr = SvPVbyte_nolen (req->data);
+	
+	send_req (req);
+}
+
+void
+aio_symlink(oldpath,newpath,callback=&PL_sv_undef)
+	SV * oldpath
+	SV * newpath
+	SV * callback
+	CODE:
+{
+	dREQ;
+	
+        req->type = REQ_SYMLINK;
+	req->fh = newSVsv (oldpath);
+	req->data2ptr = SvPVbyte_nolen (req->fh);
+	req->data = newSVsv (newpath);
+	req->dataptr = SvPVbyte_nolen (req->data);
 	
 	send_req (req);
 }

@@ -65,10 +65,10 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 1.1;
+   $VERSION = 1.2;
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
-                aio_fsync aio_fdatasync aio_readahead);
+                aio_rmdir aio_symlink aio_fsync aio_fdatasync aio_readahead);
    @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
 
    require XSLoader;
@@ -90,10 +90,18 @@ syscall has been executed asynchronously.
 All functions expecting a filehandle keep a copy of the filehandle
 internally until the request has finished.
 
-The filenames you pass to these routines I<must> be absolute. The reason
-for this is that at the time the request is being executed, the current
-working directory could have changed. Alternatively, you can make sure
-that you never change the current working directory.
+The pathnames you pass to these routines I<must> be absolute and
+encoded in byte form. The reason for the former is that at the time the
+request is being executed, the current working directory could have
+changed. Alternatively, you can make sure that you never change the
+current working directory.
+
+To encode pathnames to byte form, either make sure you either: a)
+always pass in filenames you got from outside (command line, readdir
+etc.), b) are ASCII or ISO 8859-1, c) use the Encode module and encode
+your pathnames to the locale (or other) encoding in effect in the user
+environment, d) use Glib::filename_from_unicode on unicode filenames or e)
+use something else.
 
 =over 4
 
@@ -154,10 +162,6 @@ offset C<0> within the scalar:
 
 =item aio_readahead $fh,$offset,$length, $callback
 
-Asynchronously reads the specified byte range into the page cache, using
-the C<readahead> syscall. If that syscall doesn't exist (likely if your OS
-isn't Linux) the status will be C<-1> and C<$!> is set to C<ENOSYS>.
-
 C<aio_readahead> populates the page cache with data from a file so that
 subsequent reads from that file will not block on disk I/O. The C<$offset>
 argument specifies the starting point from which data is to be read and
@@ -166,6 +170,9 @@ whole pages, so that offset is effectively rounded down to a page boundary
 and bytes are read up to the next page boundary greater than or equal to
 (off-set+length). C<aio_readahead> does not read beyond the end of the
 file. The current file offset of the file is left unchanged.
+
+If that syscall doesn't exist (likely if your OS isn't Linux) it will be
+emulated by simply reading the data, which would have a similar effect.
 
 =item aio_stat  $fh_or_path, $callback
 
@@ -194,6 +201,11 @@ Example: Print the length of F</etc/passwd>:
 Asynchronously unlink (delete) a file and call the callback with the
 result code.
 
+=item aio_rmdir $pathname, $callback
+
+Asynchronously rmdir (delete) a directory and call the callback with the
+result code.
+
 =item aio_fsync $fh, $callback
 
 Asynchronously call fsync on the given filehandle and call the callback
@@ -202,8 +214,10 @@ with the fsync result code.
 =item aio_fdatasync $fh, $callback
 
 Asynchronously call fdatasync on the given filehandle and call the
-callback with the fdatasync result code. Might set C<$!> to C<ENOSYS> if
-C<fdatasync> is not available.
+callback with the fdatasync result code.
+
+If this call isn't available because your OS lacks it or it couldn't be
+detected, it will be emulated by calling C<fsync> instead.
 
 =back
 
@@ -319,9 +333,9 @@ sub _fd2fh {
    my $sym = "IO::AIO::fd#$_[0]";
    local *$sym;
 
-   open *$sym, "+<&$_[0]"      # usually under any unix
-      or open *$sym, "<&$_[0]" # cygwin needs this
-      or open *$sym, ">&$_[0]" # cygwin needs this
+   open *$sym, "+<&=$_[0]"      # usually works under any unix
+      or open *$sym, "<&=$_[0]" # cygwin needs this
+      or open *$sym, ">&=$_[0]" # or this
       or return undef;
 
    *$sym
@@ -334,6 +348,13 @@ END {
 }
 
 1;
+
+=head2 FORK BEHAVIOUR
+
+IO::AIO handles all outstanding AIO requests before the fork, destroys all
+AIO threads, and recreates them in both the parent and the child after the
+fork.
+
 
 =head1 SEE ALSO
 
