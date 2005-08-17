@@ -334,6 +334,10 @@ static void atfork_child (void)
       
   ress = rese = 0;
 
+  close (respipe [0]);
+  close (respipe [1]);
+  create_pipe ();
+
   atfork_parent ();
 
   min_parallel (restart);

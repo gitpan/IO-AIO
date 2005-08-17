@@ -65,8 +65,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 1.3;
-
+   $VERSION = 1.4;
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
                 aio_rmdir aio_symlink aio_fsync aio_fdatasync aio_readahead);
