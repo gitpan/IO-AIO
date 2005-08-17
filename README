@@ -120,6 +120,10 @@ FUNCTIONS
         the callback without the actual number of bytes read (or -1 on
         error, just like the syscall).
 
+        The $data scalar *MUST NOT* be modified in any way while the request
+        is outstanding. Modifying it can result in segfaults or WW3 (if the
+        necessary/optional hardware is installed).
+
         Example: Read 15 bytes at offset 7 into scalar $buffer, starting at
         offset 0 within the scalar:
 
@@ -273,9 +277,12 @@ FUNCTIONS
         Under normal circumstances you don't need to call this function.
 
   FORK BEHAVIOUR
-    IO::AIO handles all outstanding AIO requests before the fork, destroys
-    all AIO threads, and recreates them in both the parent and the child
-    after the fork.
+    Before the fork IO::AIO enters a quiescent state where no requests can
+    be added in other threads and no results will be processed. After the
+    fork the parent simply leaves the quiescent state and continues
+    request/result processing, while the child clears the request/result
+    queue and starts the same number of threads as were in use by the
+    parent.
 
 SEE ALSO
     Coro, Linux::AIO.

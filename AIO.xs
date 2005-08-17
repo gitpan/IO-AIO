@@ -64,11 +64,27 @@ static int respipe [2];
 
 static pthread_mutex_t reslock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t reqlock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t frklock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  reqwait = PTHREAD_COND_INITIALIZER;
 
 static volatile aio_req reqs, reqe; /* queue start, queue end */
 static volatile aio_req ress, rese; /* queue start, queue end */
+
+static void free_req (aio_req req)
+{
+  if (req->data)
+    SvREFCNT_dec (req->data);
+
+  if (req->fh)
+    SvREFCNT_dec (req->fh);
+
+  if (req->statdata)
+    Safefree (req->statdata);
+
+  if (req->callback)
+    SvREFCNT_dec (req->callback);
+
+  Safefree (req);
+}
 
 static void
 poll_wait ()
@@ -88,24 +104,34 @@ poll_cb ()
 {
   dSP;
   int count = 0;
-  aio_req req, prv;
+  int do_croak = 0;
+  aio_req req;
 
-  pthread_mutex_lock (&reslock);
-
-  {
-    /* read any signals sent by the worker threads */
-    char buf [32];
-    while (read (respipe [0], buf, 32) == 32)
-      ;
-  }
-
-  req = ress;
-  ress = rese = 0;
-
-  pthread_mutex_unlock (&reslock);
-
-  while (req)
+  for (;;)
     {
+      pthread_mutex_lock (&reslock);
+      req = ress;
+
+      if (req)
+        {
+          ress = req->next;
+
+          if (!ress)
+            {
+              rese = 0;
+
+              /* read any signals sent by the worker threads */
+              char buf [32];
+              while (read (respipe [0], buf, 32) == 32)
+                ;
+            }
+        }
+
+      pthread_mutex_unlock (&reslock);
+
+      if (!req)
+        break;
+
       nreqs--;
 
       if (req->type == REQ_QUIT)
@@ -116,22 +142,16 @@ poll_cb ()
           errno = req->errorno;
 
           if (req->type == REQ_READ)
-            SvCUR_set (req->data, req->dataoffset
-                                  + req->result > 0 ? req->result : 0);
+            SvCUR_set (req->data, req->dataoffset + (req->result > 0 ? req->result : 0));
 
-          if (req->data)
-            SvREFCNT_dec (req->data);
+          if (req->data2ptr && (req->type == REQ_READ || req->type == REQ_WRITE))
+            SvREADONLY_off (req->data);
 
-          if (req->fh)
-            SvREFCNT_dec (req->fh);
-
-          if (req->type == REQ_STAT || req->type == REQ_LSTAT || req->type == REQ_FSTAT)
+          if (req->statdata)
             {
               PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
               PL_laststatval = req->result;
               PL_statcache   = *(req->statdata);
-
-              Safefree (req->statdata);
             }
 
           ENTER;
@@ -158,22 +178,21 @@ poll_cb ()
               PUTBACK;
               call_sv (req->callback, G_VOID | G_EVAL);
               SPAGAIN;
+
+              if (SvTRUE (ERRSV))
+                {
+                  free_req (req);
+                  croak (0);
+                }
             }
 
           LEAVE;
-          
-          if (req->callback)
-            SvREFCNT_dec (req->callback);
 
           errno = errorno;
           count++;
         }
 
-      prv = req;
-      req = req->next;
-      Safefree (prv);
-
-      /* TODO: croak on errors? */
+      free_req (req);
     }
 
   return count;
@@ -221,23 +240,27 @@ send_req (aio_req req)
   pthread_cond_signal (&reqwait);
   pthread_mutex_unlock (&reqlock);
 
-  while (nreqs > max_outstanding)
-    {
-      poll_wait ();
-      poll_cb ();
-    }
+  if (nreqs > max_outstanding)
+    for (;;)
+      {
+        poll_cb ();
+
+        if (nreqs <= max_outstanding)
+          break;
+
+        poll_wait ();
+      }
 }
 
 static void
 end_thread (void)
 {
   aio_req req;
-  New (0, req, 1, aio_cb);
+  Newz (0, req, 1, aio_cb);
   req->type = REQ_QUIT;
 
   send_req (req);
 }
-
 
 static void min_parallel (int nthreads)
 {
@@ -248,6 +271,7 @@ static void min_parallel (int nthreads)
 static void max_parallel (int nthreads)
 {
   int cur = started;
+
   while (cur > nthreads)
     {          
       end_thread ();
@@ -261,54 +285,58 @@ static void max_parallel (int nthreads)
     }
 }
 
-static int fork_started;
+static void create_pipe ()
+{
+  if (pipe (respipe))
+    croak ("unable to initialize result pipe");
+
+  if (fcntl (respipe [0], F_SETFL, O_NONBLOCK))
+    croak ("cannot set result pipe to nonblocking mode");
+
+  if (fcntl (respipe [1], F_SETFL, O_NONBLOCK))
+    croak ("cannot set result pipe to nonblocking mode");
+}
 
 static void atfork_prepare (void)
 {
-  pthread_mutex_lock (&frklock);
-
-  fork_started = started;
-
-  for (;;) {
-    while (nreqs)
-      {
-        poll_wait ();
-        poll_cb ();
-      }
-
-    max_parallel (0);
-  
-    pthread_mutex_lock (&reqlock);
-
-    if (!nreqs && !started)
-      break;
-
-    pthread_mutex_unlock (&reqlock);
-
-    min_parallel (fork_started);
-  }
-
+  pthread_mutex_lock (&reqlock);
   pthread_mutex_lock (&reslock);
-
-  assert (!started);
-  assert (!nreqs);
-  assert (!reqs && !reqe);
-  assert (!ress && !rese);
 }
 
 static void atfork_parent (void)
 {
   pthread_mutex_unlock (&reslock);
-  min_parallel (fork_started);
   pthread_mutex_unlock (&reqlock);
-  pthread_mutex_unlock (&frklock);
 }
 
 static void atfork_child (void)
 {
+  aio_req prv;
+
+  int restart = started;
+  started = 0;
+
+  while (reqs)
+    {
+      prv = reqs;
+      reqs = prv->next;
+      free_req (prv);
+    }
+
   reqs = reqe = 0;
+      
+  while (ress)
+    {
+      prv = ress;
+      ress = prv->next;
+      free_req (prv);
+    }
+      
+  ress = rese = 0;
 
   atfork_parent ();
+
+  min_parallel (restart);
 }
 
 /*****************************************************************************/
@@ -481,7 +509,7 @@ aio_proc (void *thr_arg)
   if (!req)							\
     croak ("out of memory during aio_req allocation");		\
 								\
-  req->callback = SvREFCNT_inc (callback);
+  req->callback = newSVsv (callback);
 	
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
@@ -489,15 +517,7 @@ PROTOTYPES: ENABLE
 
 BOOT:
 {
-        if (pipe (respipe))
-          croak ("unable to initialize result pipe");
-
-        if (fcntl (respipe [0], F_SETFL, O_NONBLOCK))
-          croak ("cannot set result pipe to nonblocking mode");
-
-        if (fcntl (respipe [1], F_SETFL, O_NONBLOCK))
-          croak ("cannot set result pipe to nonblocking mode");
-
+	create_pipe ();
         pthread_atfork (atfork_prepare, atfork_parent, atfork_child);
 }
 
@@ -612,7 +632,12 @@ aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
           req->length = length;
           req->data = SvREFCNT_inc (data);
           req->dataptr = (char *)svptr + dataoffset;
-          req->callback = SvREFCNT_inc (callback);
+
+          if (!SvREADONLY (data))
+            {
+              SvREADONLY_on (data);
+              req->data2ptr = (void *)data;
+            }
 
           send_req (req);
         }
@@ -651,7 +676,10 @@ aio_stat(fh_or_path,callback=&PL_sv_undef)
 
         New (0, req->statdata, 1, Stat_t);
         if (!req->statdata)
-          croak ("out of memory during aio_req->statdata allocation (sorry, i just leaked memory, too)");
+          {
+            free_req (req);
+            croak ("out of memory during aio_req->statdata allocation");
+          }
 
         if (SvPOK (fh_or_path))
           {

@@ -65,7 +65,8 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 1.2;
+   $VERSION = 1.3;
+
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
                 aio_rmdir aio_symlink aio_fsync aio_fdatasync aio_readahead);
@@ -151,6 +152,10 @@ Reads or writes C<length> bytes from the specified C<fh> and C<offset>
 into the scalar given by C<data> and offset C<dataoffset> and calls the
 callback without the actual number of bytes read (or -1 on error, just
 like the syscall).
+
+The C<$data> scalar I<MUST NOT> be modified in any way while the request
+is outstanding. Modifying it can result in segfaults or WW3 (if the
+necessary/optional hardware is installed).
 
 Example: Read 15 bytes at offset 7 into scalar C<$buffer>, starting at
 offset C<0> within the scalar:
@@ -351,10 +356,11 @@ END {
 
 =head2 FORK BEHAVIOUR
 
-IO::AIO handles all outstanding AIO requests before the fork, destroys all
-AIO threads, and recreates them in both the parent and the child after the
-fork.
-
+Before the fork IO::AIO enters a quiescent state where no requests can be
+added in other threads and no results will be processed. After the fork
+the parent simply leaves the quiescent state and continues request/result
+processing, while the child clears the request/result queue and starts the
+same number of threads as were in use by the parent.
 
 =head1 SEE ALSO
 

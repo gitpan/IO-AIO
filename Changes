@@ -1,5 +1,20 @@
 Revision history for IO::AIO
 
+1.3  Wed Aug 17 07:25:54 CEST 2005
+	- properly propagate exceptions from callbacks, instead of silently
+          eating them.
+        - use a different fork algorithm that avoids recursive callback
+          invocations and reduces fork latency in busy processes.
+        - fix a bug where the buffer scalar in aio_read got assigned the wrong
+          length after reading.
+        - fix a bug where the child would process some outstanding requests
+          from the parent.
+        - make a copy of the callback scalar, to avoid some very uncommon
+          (but valid) usages where the callback scalar changes.
+        - the callback was never freed in aio_read/aio_write.
+        - aio_read/aio_write will now set the readonly flag on the data
+          scalar for better error reporting.
+
 1.2  Wed Aug 17 01:22:58 CEST 2005
 	- verified on cygwin, linux/amd64+ia32+alpha, solaris.
         - use SvPVbyte for filenames now. You *need* to encode your strings to
