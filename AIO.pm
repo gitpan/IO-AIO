@@ -65,7 +65,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 1.4;
+   $VERSION = 1.5;
 
    @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
                 aio_rmdir aio_symlink aio_fsync aio_fdatasync aio_readahead);
@@ -289,24 +289,29 @@ Strictly equivalent to:
 
 =item IO::AIO::min_parallel $nthreads
 
-Set the minimum number of AIO threads to C<$nthreads>. The default is
-C<1>, which means a single asynchronous operation can be done at one time
+Set the minimum number of AIO threads to C<$nthreads>. The current default
+is C<4>, which means four asynchronous operations can be done at one time
 (the number of outstanding operations, however, is unlimited).
+
+IO::AIO starts threads only on demand, when an AIO request is queued and
+no free thread exists.
 
 It is recommended to keep the number of threads low, as some Linux
 kernel versions will scale negatively with the number of threads (higher
 parallelity => MUCH higher latency). With current Linux 2.6 versions, 4-32
 threads should be fine.
 
-Under normal circumstances you don't need to call this function, as this
-module automatically starts some threads (the exact number might change,
-and is currently 4).
+Under most circumstances you don't need to call this function, as the
+module selects a default that is suitable for low to moderate load.
 
 =item IO::AIO::max_parallel $nthreads
 
-Sets the maximum number of AIO threads to C<$nthreads>. If more than
-the specified number of threads are currently running, kill them. This
-function blocks until the limit is reached.
+Sets the maximum number of AIO threads to C<$nthreads>. If more than the
+specified number of threads are currently running, this function kills
+them. This function blocks until the limit is reached.
+
+While C<$nthreads> are zero, aio requests get queued but not executed
+until the number of threads has been increased again.
 
 This module automatically runs C<max_parallel 0> at program end, to ensure
 that all threads are killed and that there are no outstanding requests.
@@ -320,7 +325,7 @@ try to queue up more than this number of requests, the caller will block until
 some requests have been handled.
 
 The default is very large, so normally there is no practical limit. If you
-queue up many requests in a loop it it often improves speed if you set
+queue up many requests in a loop it often improves speed if you set
 this to a relatively low number, such as C<100>.
 
 Under normal circumstances you don't need to call this function.
@@ -355,11 +360,13 @@ END {
 
 =head2 FORK BEHAVIOUR
 
-Before the fork IO::AIO enters a quiescent state where no requests can be
-added in other threads and no results will be processed. After the fork
-the parent simply leaves the quiescent state and continues request/result
-processing, while the child clears the request/result queue and starts the
-same number of threads as were in use by the parent.
+Before the fork, IO::AIO enters a quiescent state where no requests
+can be added in other threads and no results will be processed. After
+the fork the parent simply leaves the quiescent state and continues
+request/result processing, while the child clears the request/result
+queue (so the requests started before the fork will only be handled in
+the parent). Threats will be started on demand until the limit ste in the
+parent process has been reached again.
 
 =head1 SEE ALSO
 

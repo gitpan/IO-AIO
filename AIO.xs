@@ -57,7 +57,7 @@ typedef struct aio_cb {
 
 typedef aio_cb *aio_req;
 
-static int started;
+static int started, wanted;
 static volatile int nreqs;
 static int max_outstanding = 1<<30;
 static int respipe [2];
@@ -118,12 +118,12 @@ poll_cb ()
 
           if (!ress)
             {
-              rese = 0;
-
               /* read any signals sent by the worker threads */
               char buf [32];
               while (read (respipe [0], buf, 32) == 32)
                 ;
+
+              rese = 0;
             }
         }
 
@@ -223,6 +223,9 @@ start_thread (void)
 static void
 send_req (aio_req req)
 {
+  while (started < wanted && nreqs >= started)
+    start_thread ();
+
   nreqs++;
 
   pthread_mutex_lock (&reqlock);
@@ -264,21 +267,24 @@ end_thread (void)
 
 static void min_parallel (int nthreads)
 {
-  while (nthreads > started)
-    start_thread ();
+  if (wanted < nthreads)
+    wanted = nthreads;
 }
 
 static void max_parallel (int nthreads)
 {
   int cur = started;
 
-  while (cur > nthreads)
-    {          
+  if (wanted > nthreads)
+    wanted = nthreads;
+
+  while (cur > wanted)
+    {
       end_thread ();
       cur--;
     }
 
-  while (started > nthreads)
+  while (started > wanted)
     {
       poll_wait ();
       poll_cb ();
@@ -313,7 +319,6 @@ static void atfork_child (void)
 {
   aio_req prv;
 
-  int restart = started;
   started = 0;
 
   while (reqs)
@@ -339,8 +344,6 @@ static void atfork_child (void)
   create_pipe ();
 
   atfork_parent ();
-
-  min_parallel (restart);
 }
 
 /*****************************************************************************/

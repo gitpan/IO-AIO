@@ -20,7 +20,8 @@ idea, and I no longer care).
 EOF
 }
 
-autoconf::run_script();
+autoconf::run_script()
+   and die "\nconfigure failed, check it's output above and autoconf/config.log\n\n";
 
 my $mm = MM->new({
     dist         => {

@@ -1,5 +1,11 @@
 Revision history for IO::AIO
 
+1.5  Sat Aug 20 02:32:19 CEST 2005
+	- create the aio threads on demand only.
+	- somebody nagged about C89 compatibility, so this release should
+          be C89 compatible, but no guarantees for future ones.
+        - abort when the configure script fails.
+
 1.4  Wed Aug 17 08:07:27 CEST 2005
 	- forget to recreate the pipe after forking, this could cause
           deadlocks.
