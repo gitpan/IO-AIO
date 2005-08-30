@@ -1,7 +1,14 @@
 Revision history for IO::AIO
 
+1.6  Tue Aug 30 17:44:44 CEST 2005
+        - added aio_readdir, aio_scandir.
+        - added aio_sendfile, including sendfile emulation when sendfile
+          isn't available. Linux, FreeBSD and HP-UX might work (sendfilev
+          support is unavailable on my solaris 8 machine, but preliminary
+          code is there. What's lacking is configury stuff and testing...).
+
 1.5  Sat Aug 20 02:32:19 CEST 2005
-	- create the aio threads on demand only.
+	- create the aio threads on demand only (good after forking).
 	- somebody nagged about C89 compatibility, so this release should
           be C89 compatible, but no guarantees for future ones.
         - abort when the configure script fails.

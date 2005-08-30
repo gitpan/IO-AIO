@@ -7,33 +7,47 @@
 
 #include "autoconf/config.h"
 
+#include <pthread.h>
+
+#include <stddef.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sched.h>
 
-#include <pthread.h>
-
-typedef void *InputStream;  /* hack, but 5.6.1 is simply toooo old ;) */
-typedef void *OutputStream; /* hack, but 5.6.1 is simply toooo old ;) */
-typedef void *InOutStream;  /* hack, but 5.6.1 is simply toooo old ;) */
+#if HAVE_SENDFILE
+# if __linux
+#  include <sys/sendfile.h>
+# elif __freebsd
+#  include <sys/socket.h>
+#  include <sys/uio.h>
+# elif __hpux
+#  include <sys/socket.h>
+# elif __solaris /* not yet */
+#  include <sys/sendfile.h>
+# else
+#  error sendfile support requested but not available
+# endif
+#endif
 
 #if __ia64
 # define STACKSIZE 65536
 #else
-# define STACKSIZE  4096
+# define STACKSIZE  8192
 #endif
 
 enum {
   REQ_QUIT,
   REQ_OPEN, REQ_CLOSE,
   REQ_READ, REQ_WRITE, REQ_READAHEAD,
+  REQ_SENDFILE,
   REQ_STAT, REQ_LSTAT, REQ_FSTAT,
   REQ_FSYNC, REQ_FDATASYNC,
   REQ_UNLINK, REQ_RMDIR,
+  REQ_READDIR,
   REQ_SYMLINK,
 };
 
@@ -42,13 +56,15 @@ typedef struct aio_cb {
 
   int type;
 
-  int fd;
+  /* should receive a cleanup, with unions */
+  int fd, fd2;
   off_t offset;
   size_t length;
   ssize_t result;
   mode_t mode; /* open */
   int errorno;
-  SV *data, *callback, *fh;
+  SV *data, *callback;
+  SV *fh, *fh2;
   void *dataptr, *data2ptr;
   STRLEN dataoffset;
 
@@ -77,11 +93,17 @@ static void free_req (aio_req req)
   if (req->fh)
     SvREFCNT_dec (req->fh);
 
+  if (req->fh2)
+    SvREFCNT_dec (req->fh2);
+
   if (req->statdata)
     Safefree (req->statdata);
 
   if (req->callback)
     SvREFCNT_dec (req->callback);
+
+  if (req->type == REQ_READDIR && req->result >= 0)
+    free (req->data2ptr);
 
   Safefree (req);
 }
@@ -156,21 +178,48 @@ poll_cb ()
 
           ENTER;
           PUSHMARK (SP);
-          XPUSHs (sv_2mortal (newSViv (req->result)));
 
-          if (req->type == REQ_OPEN)
+          if (req->type == REQ_READDIR)
             {
-              /* convert fd to fh */
-              SV *fh;
+              SV *rv = &PL_sv_undef;
 
-              PUTBACK;
-              call_pv ("IO::AIO::_fd2fh", G_SCALAR | G_EVAL);
-              SPAGAIN;
+              if (req->result >= 0)
+                {
+                  char *buf = req->data2ptr;
+                  AV *av = newAV ();
 
-              fh = SvREFCNT_inc (POPs);
+                  while (req->result)
+                    {
+                      SV *sv = newSVpv (buf, 0);
 
-              PUSHMARK (SP);
-              XPUSHs (sv_2mortal (fh));
+                      av_push (av, sv);
+                      buf += SvCUR (sv) + 1;
+                      req->result--;
+                    }
+
+                  rv = sv_2mortal (newRV_noinc ((SV *)av));
+                }
+
+              XPUSHs (rv);
+            }
+          else
+            {
+              XPUSHs (sv_2mortal (newSViv (req->result)));
+
+              if (req->type == REQ_OPEN)
+                {
+                  /* convert fd to fh */
+                  SV *fh;
+
+                  PUTBACK;
+                  call_pv ("IO::AIO::_fd2fh", G_SCALAR | G_EVAL);
+                  SPAGAIN;
+
+                  fh = SvREFCNT_inc (POPs);
+
+                  PUSHMARK (SP);
+                  XPUSHs (sv_2mortal (fh));
+                }
             }
 
           if (SvOK (req->callback))
@@ -303,49 +352,6 @@ static void create_pipe ()
     croak ("cannot set result pipe to nonblocking mode");
 }
 
-static void atfork_prepare (void)
-{
-  pthread_mutex_lock (&reqlock);
-  pthread_mutex_lock (&reslock);
-}
-
-static void atfork_parent (void)
-{
-  pthread_mutex_unlock (&reslock);
-  pthread_mutex_unlock (&reqlock);
-}
-
-static void atfork_child (void)
-{
-  aio_req prv;
-
-  started = 0;
-
-  while (reqs)
-    {
-      prv = reqs;
-      reqs = prv->next;
-      free_req (prv);
-    }
-
-  reqs = reqe = 0;
-      
-  while (ress)
-    {
-      prv = ress;
-      ress = prv->next;
-      free_req (prv);
-    }
-      
-  ress = rese = 0;
-
-  close (respipe [0]);
-  close (respipe [1]);
-  create_pipe ();
-
-  atfork_parent ();
-}
-
 /*****************************************************************************/
 /* work around various missing functions */
 
@@ -358,7 +364,7 @@ static void atfork_child (void)
  * normal read/write by using a mutex. slows down execution a lot,
  * but that's your problem, not mine.
  */
-static pthread_mutex_t iolock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t preadwritelock = PTHREAD_MUTEX_INITIALIZER;
 
 static ssize_t
 pread (int fd, void *buf, size_t count, off_t offset)
@@ -366,12 +372,12 @@ pread (int fd, void *buf, size_t count, off_t offset)
   ssize_t res;
   off_t ooffset;
 
-  pthread_mutex_lock (&iolock);
+  pthread_mutex_lock (&preadwritelock);
   ooffset = lseek (fd, 0, SEEK_CUR);
   lseek (fd, offset, SEEK_SET);
   res = read (fd, buf, count);
   lseek (fd, ooffset, SEEK_SET);
-  pthread_mutex_unlock (&iolock);
+  pthread_mutex_unlock (&preadwritelock);
 
   return res;
 }
@@ -382,12 +388,12 @@ pwrite (int fd, void *buf, size_t count, off_t offset)
   ssize_t res;
   off_t ooffset;
 
-  pthread_mutex_lock (&iolock);
+  pthread_mutex_lock (&preadwritelock);
   ooffset = lseek (fd, 0, SEEK_CUR);
   lseek (fd, offset, SEEK_SET);
   res = write (fd, buf, count);
   lseek (fd, offset, SEEK_SET);
-  pthread_mutex_unlock (&iolock);
+  pthread_mutex_unlock (&preadwritelock);
 
   return res;
 }
@@ -400,11 +406,11 @@ pwrite (int fd, void *buf, size_t count, off_t offset)
 #if !HAVE_READAHEAD
 # define readahead aio_readahead
 
-static char readahead_buf[4096];
-
 static ssize_t
 readahead (int fd, off_t offset, size_t count)
 {
+  char readahead_buf[4096];
+
   while (count > 0)
     {
       size_t len = count < sizeof (readahead_buf) ? count : sizeof (readahead_buf);
@@ -417,6 +423,194 @@ readahead (int fd, off_t offset, size_t count)
   errno = 0;
 }
 #endif
+
+#if !HAVE_READDIR_R
+# define readdir_r aio_readdir_r
+
+static pthread_mutex_t readdirlock = PTHREAD_MUTEX_INITIALIZER;
+  
+static int
+readdir_r (DIR *dirp, struct dirent *ent, struct dirent **res)
+{
+  struct dirent *e;
+  int errorno;
+
+  pthread_mutex_lock (&readdirlock);
+
+  e = readdir (dirp);
+  errorno = errno;
+
+  if (e)
+    {
+      *res = ent;
+      strcpy (ent->d_name, e->d_name);
+    }
+  else
+    *res = 0;
+
+  pthread_mutex_unlock (&readdirlock);
+
+  errno = errorno;
+  return e ? 0 : -1;
+}
+#endif
+
+/* sendfile always needs emulation */
+static ssize_t
+sendfile_ (int ofd, int ifd, off_t offset, size_t count)
+{
+  ssize_t res;
+
+  if (!count)
+    return 0;
+
+#if HAVE_SENDFILE
+# if __linux
+  res = sendfile (ofd, ifd, &offset, count);
+
+# elif __freebsd
+  /*
+   * Of course, the freebsd sendfile is a dire hack with no thoughts
+   * wasted on making it similar to other I/O functions.
+   */
+  {
+    off_t sbytes;
+    res = sendfile (ifd, ofd, offset, count, 0, &sbytes, 0);
+
+    if (res < 0 && sbytes)
+      /* maybe only on EAGAIN only: as usual, the manpage leaves you guessing */
+      res = sbytes;
+  }
+
+# elif __hpux
+  res = sendfile (ofd, ifd, offset, count, 0, 0);
+
+# elif __solaris
+  {
+    struct sendfilevec vec;
+    size_t sbytes;
+
+    vec.sfv_fd   = ifd;
+    vec.sfv_flag = 0;
+    vec.sfv_off  = offset;
+    vec.sfv_len  = count;
+
+    res = sendfilev (ofd, &vec, 1, &sbytes);
+
+    if (res < 0 && sbytes)
+      res = sbytes;
+  }
+
+# endif
+#else
+  res = -1;
+  errno = ENOSYS;
+#endif
+
+  if (res <  0
+      && (errno == ENOSYS || errno == EINVAL || errno == ENOTSOCK
+#if __solaris
+          || errno == EAFNOSUPPORT || errno == EPROTOTYPE
+#endif
+         )
+      )
+    {
+      /* emulate sendfile. this is a major pain in the ass */
+      char buf[4096];
+      res = 0;
+
+      while (count)
+        {
+          ssize_t cnt;
+          
+          cnt = pread (ifd, buf, count > 4096 ? 4096 : count, offset);
+
+          if (cnt <= 0)
+            {
+              if (cnt && !res) res = -1;
+              break;
+            }
+
+          cnt = write (ofd, buf, cnt);
+
+          if (cnt <= 0)
+            {
+              if (cnt && !res) res = -1;
+              break;
+            }
+
+          offset += cnt;
+          res    += cnt;
+          count  -= cnt;
+        }
+    }
+
+  return res;
+}
+
+/* read a full directory */
+static int
+scandir_ (const char *path, void **namesp)
+{
+  DIR *dirp = opendir (path);
+  union
+  {    
+    struct dirent d;
+    char b [offsetof (struct dirent, d_name) + NAME_MAX + 1];
+  } u;
+  struct dirent *entp;
+  char *name, *names;
+  int memlen = 4096;
+  int memofs = 0;
+  int res = 0;
+  int errorno;
+
+  if (!dirp)
+    return -1;
+
+  names = malloc (memlen);
+
+  for (;;)
+    {
+      errno = 0, readdir_r (dirp, &u.d, &entp);
+
+      if (!entp)
+        break;
+
+      name = entp->d_name;
+
+      if (name [0] != '.' || (name [1] && (name [1] != '.' || name [2])))
+        {
+          int len = strlen (name) + 1;
+
+          res++;
+
+          while (memofs + len > memlen)
+            {
+              memlen *= 2;
+              names = realloc (names, memlen);
+              if (!names)
+                break;
+            }
+
+          memcpy (names + memofs, name, len);
+          memofs += len;
+        }
+    }
+
+  errorno = errno;
+  closedir (dirp);
+
+  if (errorno)
+    {
+      free (names);
+      errno = errorno;
+      res = -1;
+    }
+
+  *namesp = (void *)names;
+  return res;
+}
 
 /*****************************************************************************/
 
@@ -458,6 +652,7 @@ aio_proc (void *thr_arg)
           case REQ_WRITE:     req->result = pwrite    (req->fd, req->dataptr, req->length, req->offset); break;
 
           case REQ_READAHEAD: req->result = readahead (req->fd, req->offset, req->length); break;
+          case REQ_SENDFILE:  req->result = sendfile_ (req->fd, req->fd2, req->offset, req->length); break;
 
           case REQ_STAT:      req->result = stat      (req->dataptr, req->statdata); break;
           case REQ_LSTAT:     req->result = lstat     (req->dataptr, req->statdata); break;
@@ -471,6 +666,7 @@ aio_proc (void *thr_arg)
 
           case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
           case REQ_FSYNC:     req->result = fsync     (req->fd); break;
+          case REQ_READDIR:   req->result = scandir_  (req->dataptr, &req->data2ptr); break;
 
           case REQ_QUIT:
             break;
@@ -504,6 +700,63 @@ aio_proc (void *thr_arg)
   while (type != REQ_QUIT);
 
   return 0;
+}
+
+/*****************************************************************************/
+
+static void atfork_prepare (void)
+{
+  pthread_mutex_lock (&reqlock);
+  pthread_mutex_lock (&reslock);
+#if !HAVE_PREADWRITE
+  pthread_mutex_lock (&preadwritelock);
+#endif
+#if !HAVE_READDIR_R
+  pthread_mutex_lock (&readdirlock);
+#endif
+}
+
+static void atfork_parent (void)
+{
+#if !HAVE_READDIR_R
+  pthread_mutex_unlock (&readdirlock);
+#endif
+#if !HAVE_PREADWRITE
+  pthread_mutex_unlock (&preadwritelock);
+#endif
+  pthread_mutex_unlock (&reslock);
+  pthread_mutex_unlock (&reqlock);
+}
+
+static void atfork_child (void)
+{
+  aio_req prv;
+
+  started = 0;
+
+  while (reqs)
+    {
+      prv = reqs;
+      reqs = prv->next;
+      free_req (prv);
+    }
+
+  reqs = reqe = 0;
+      
+  while (ress)
+    {
+      prv = ress;
+      ress = prv->next;
+      free_req (prv);
+    }
+      
+  ress = rese = 0;
+
+  close (respipe [0]);
+  close (respipe [1]);
+  create_pipe ();
+
+  atfork_parent ();
 }
 
 #define dREQ							\
@@ -590,9 +843,9 @@ void
 aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 	SV *	fh
         UV	offset
-        IV	length
+        UV	length
         SV *	data
-        IV	dataoffset
+        UV	dataoffset
         SV *	callback
         ALIAS:
            aio_read  = REQ_READ
@@ -648,6 +901,29 @@ aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 
           send_req (req);
         }
+}
+
+void
+aio_sendfile(out_fh,in_fh,in_offset,length,callback=&PL_sv_undef)
+        SV *	out_fh
+        SV *	in_fh
+        UV	in_offset
+        UV	length
+        SV *	callback
+	PROTOTYPE: $$$$;$
+        CODE:
+{
+	dREQ;
+
+        req->type = REQ_SENDFILE;
+        req->fh = newSVsv (out_fh);
+        req->fd = PerlIO_fileno (IoIFP (sv_2io (out_fh)));
+        req->fh2 = newSVsv (in_fh);
+        req->fd2 = PerlIO_fileno (IoIFP (sv_2io (in_fh)));
+        req->offset = in_offset;
+        req->length = length;
+
+        send_req (req);
 }
 
 void
@@ -735,6 +1011,21 @@ aio_symlink(oldpath,newpath,callback=&PL_sv_undef)
 	req->fh = newSVsv (oldpath);
 	req->data2ptr = SvPVbyte_nolen (req->fh);
 	req->data = newSVsv (newpath);
+	req->dataptr = SvPVbyte_nolen (req->data);
+	
+	send_req (req);
+}
+
+void
+aio_readdir(pathname,callback=&PL_sv_undef)
+	SV * pathname
+	SV * callback
+	CODE:
+{
+	dREQ;
+	
+        req->type = REQ_READDIR;
+	req->data = newSVsv (pathname);
 	req->dataptr = SvPVbyte_nolen (req->data);
 	
 	send_req (req);

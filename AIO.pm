@@ -65,11 +65,13 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = 1.5;
+   $VERSION = 1.6;
 
-   @EXPORT = qw(aio_read aio_write aio_open aio_close aio_stat aio_lstat aio_unlink
-                aio_rmdir aio_symlink aio_fsync aio_fdatasync aio_readahead);
-   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
+   @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
+                aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
+                aio_fsync aio_fdatasync aio_readahead);
+   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel
+                   max_outstanding nreqs);
 
    require XSLoader;
    XSLoader::load IO::AIO, $VERSION;
@@ -105,7 +107,7 @@ use something else.
 
 =over 4
 
-=item aio_open $pathname, $flags, $mode, $callback
+=item aio_open $pathname, $flags, $mode, $callback->($fh)
 
 Asynchronously open or create a file and call the callback with a newly
 created filehandle for the file.
@@ -132,7 +134,7 @@ Example:
       }
    };
 
-=item aio_close $fh, $callback
+=item aio_close $fh, $callback->($status)
 
 Asynchronously close a file and call the callback with the result
 code. I<WARNING:> although accepted, you should not pass in a perl
@@ -143,9 +145,9 @@ C<close> or just let filehandles go out of scope.
 This is supposed to be a bug in the API, so that might change. It's
 therefore best to avoid this function.
 
-=item aio_read  $fh,$offset,$length, $data,$dataoffset,$callback
+=item aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
-=item aio_write $fh,$offset,$length, $data,$dataoffset,$callback
+=item aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
 Reads or writes C<length> bytes from the specified C<fh> and C<offset>
 into the scalar given by C<data> and offset C<dataoffset> and calls the
@@ -164,7 +166,30 @@ offset C<0> within the scalar:
       print "read $_[0] bytes: <$buffer>\n";
    };
 
-=item aio_readahead $fh,$offset,$length, $callback
+=item aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
+
+Tries to copy C<$length> bytes from C<$in_fh> to C<$out_fh>. It starts
+reading at byte offset C<$in_offset>, and starts writing at the current
+file offset of C<$out_fh>. Because of that, it is not safe to issue more
+than one C<aio_sendfile> per C<$out_fh>, as they will interfere with each
+other.
+
+This call tries to make use of a native C<sendfile> syscall to provide
+zero-copy operation. For this to work, C<$out_fh> should refer to a
+socket, and C<$in_fh> should refer to mmap'able file.
+
+If the native sendfile call fails or is not implemented, it will be
+emulated, so you can call C<aio_sendfile> on any type of filehandle
+regardless of the limitations of the operating system.
+
+Please note, however, that C<aio_sendfile> can read more bytes from
+C<$in_fh> than are written, and there is no way to find out how many
+bytes have been read from C<aio_sendfile> alone, as C<aio_sendfile> only
+provides the number of bytes written to C<$out_fh>. Only if the result
+value equals C<$length> one can assume that C<$length> bytes have been
+read.
+
+=item aio_readahead $fh,$offset,$length, $callback->($retval)
 
 C<aio_readahead> populates the page cache with data from a file so that
 subsequent reads from that file will not block on disk I/O. The C<$offset>
@@ -178,9 +203,9 @@ file. The current file offset of the file is left unchanged.
 If that syscall doesn't exist (likely if your OS isn't Linux) it will be
 emulated by simply reading the data, which would have a similar effect.
 
-=item aio_stat  $fh_or_path, $callback
+=item aio_stat  $fh_or_path, $callback->($status)
 
-=item aio_lstat $fh, $callback
+=item aio_lstat $fh, $callback->($status)
 
 Works like perl's C<stat> or C<lstat> in void context. The callback will
 be called after the stat and the results will be available using C<stat _>
@@ -200,22 +225,168 @@ Example: Print the length of F</etc/passwd>:
       print "size is ", -s _, "\n";
    };
 
-=item aio_unlink $pathname, $callback
+=item aio_unlink $pathname, $callback->($status)
 
 Asynchronously unlink (delete) a file and call the callback with the
 result code.
 
-=item aio_rmdir $pathname, $callback
+=item aio_rmdir $pathname, $callback->($status)
 
 Asynchronously rmdir (delete) a directory and call the callback with the
 result code.
 
-=item aio_fsync $fh, $callback
+=item aio_readdir $pathname $callback->($entries)
+
+Unlike the POSIX call of the same name, C<aio_readdir> reads an entire
+directory (i.e. opendir + readdir + closedir). The entries will not be
+sorted, and will B<NOT> include the C<.> and C<..> entries.
+
+The callback a single argument which is either C<undef> or an array-ref
+with the filenames.
+
+=item aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
+
+Scans a directory (similar to C<aio_readdir>) and tries to separate the
+entries of directory C<$path> into two sets of names, ones you can recurse
+into (directories), and ones you cannot recurse into (everything else).
+
+C<aio_scandir> is a composite request that consists of many
+aio-primitives. C<$maxreq> specifies the maximum number of outstanding
+aio requests that this function generates. If it is C<< <= 0 >>, then a
+suitable default will be chosen (currently 8).
+
+On error, the callback is called without arguments, otherwise it receives
+two array-refs with path-relative entry names.
+
+Example:
+
+   aio_scandir $dir, 0, sub {
+      my ($dirs, $nondirs) = @_;
+      print "real directories: @$dirs\n";
+      print "everything else: @$nondirs\n";
+   };
+
+Implementation notes.
+
+The C<aio_readdir> cannot be avoided, but C<stat()>'ing every entry can.
+
+After reading the directory, the modification time, size etc. of the
+directory before and after the readdir is checked, and if they match, the
+link count will be used to decide how many entries are directories (if
+>= 2). Otherwise, no knowledge of the number of subdirectories will be
+assumed.
+
+Then entires will be sorted into likely directories (everything without a
+non-initial dot) and likely non-directories (everything else).  Then every
+entry + C</.> will be C<stat>'ed, likely directories first. This is often
+faster because filesystems might detect the type of the entry without
+reading the inode data (e.g. ext2s filetype feature). If that succeeds,
+it assumes that the entry is a directory or a symlink to directory (which
+will be checked seperately).
+
+If the known number of directories has been reached, the rest of the
+entries is assumed to be non-directories.
+
+=cut
+
+sub aio_scandir($$$) {
+   my ($path, $maxreq, $cb) = @_;
+
+   $maxreq = 8 if $maxreq <= 0;
+
+   # stat once
+   aio_stat $path, sub {
+      $cb->() if $_[0];
+      my $hash1 = join ":", (stat _)[0,1,3,7,9];
+
+      # read the directory entries
+      aio_readdir $path, sub {
+         my $entries = shift
+            or return $cb->();
+
+         # stat the dir another time
+         aio_stat $path, sub {
+            my $hash2 = join ":", (stat _)[0,1,3,7,9];
+
+            my $ndirs;
+
+            # take the slow route if anything looks fishy
+            if ($hash1 ne $hash2) {
+               $ndirs = -1;
+            } else {
+               # if nlink == 2, we are finished
+               # on non-posix-fs's, we rely on nlink < 2
+               $ndirs = (stat _)[3] - 2
+                  or $cb->([], $entries);
+            }
+
+            # sort into likely dirs and likely nondirs
+            # dirs == files without ".", short entries first
+            $entries = [map $_->[0],
+                           sort { $b->[1] cmp $a->[1] }
+                              map [$_, sprintf "%s%04d", (/.\./ ? "1" : "0"), length],
+                                 @$entries];
+
+            my (@dirs, @nondirs);
+
+            my ($statcb, $schedcb);
+            my $nreq = 0;
+
+            $schedcb = sub {
+               if (@$entries) {
+                  if ($nreq < $maxreq) {
+                     my $ent = pop @$entries;
+                     $nreq++;
+                     aio_stat "$path/$ent/.", sub { $statcb->($_[0], $ent) };
+                  }
+               } elsif (!$nreq) {
+                  # finished
+                  undef $statcb;
+                  undef $schedcb;
+                  $cb->(\@dirs, \@nondirs);
+                  undef $cb;
+               }
+            };
+            $statcb = sub {
+               my ($status, $entry) = @_;
+
+               if ($status < 0) {
+                  $nreq--;
+                  push @nondirs, $entry;
+                  &$schedcb;
+               } else {
+                  # need to check for real directory
+                  aio_lstat "$path/$entry", sub {
+                     $nreq--;
+
+                     if (-d _) {
+                        push @dirs, $entry;
+
+                        if (!--$ndirs) {
+                           push @nondirs, @$entries;
+                           $entries = [];
+                        }
+                     } else {
+                        push @nondirs, $entry;
+                     }
+
+                     &$schedcb;
+                  }
+               }
+            };
+
+            &$schedcb while @$entries && $nreq < $maxreq;
+         };
+      };
+   };
+}
+
+=item aio_fsync $fh, $callback->($status)
 
 Asynchronously call fsync on the given filehandle and call the callback
 with the fsync result code.
 
-=item aio_fdatasync $fh, $callback
+=item aio_fdatasync $fh, $callback->($status)
 
 Asynchronously call fdatasync on the given filehandle and call the
 callback with the fdatasync result code.

@@ -77,7 +77,7 @@ FUNCTIONS
     environment, d) use Glib::filename_from_unicode on unicode filenames or
     e) use something else.
 
-    aio_open $pathname, $flags, $mode, $callback
+    aio_open $pathname, $flags, $mode, $callback->($fh)
         Asynchronously open or create a file and call the callback with a
         newly created filehandle for the file.
 
@@ -103,7 +103,7 @@ FUNCTIONS
               }
            };
 
-    aio_close $fh, $callback
+    aio_close $fh, $callback->($status)
         Asynchronously close a file and call the callback with the result
         code. *WARNING:* although accepted, you should not pass in a perl
         filehandle here, as perl will likely close the file descriptor
@@ -113,8 +113,8 @@ FUNCTIONS
         This is supposed to be a bug in the API, so that might change. It's
         therefore best to avoid this function.
 
-    aio_read $fh,$offset,$length, $data,$dataoffset,$callback
-    aio_write $fh,$offset,$length, $data,$dataoffset,$callback
+    aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
+    aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
         Reads or writes "length" bytes from the specified "fh" and "offset"
         into the scalar given by "data" and offset "dataoffset" and calls
         the callback without the actual number of bytes read (or -1 on
@@ -132,7 +132,29 @@ FUNCTIONS
               print "read $_[0] bytes: <$buffer>\n";
            };
 
-    aio_readahead $fh,$offset,$length, $callback
+    aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
+        Tries to copy $length bytes from $in_fh to $out_fh. It starts
+        reading at byte offset $in_offset, and starts writing at the current
+        file offset of $out_fh. Because of that, it is not safe to issue
+        more than one "aio_sendfile" per $out_fh, as they will interfere
+        with each other.
+
+        This call tries to make use of a native "sendfile" syscall to
+        provide zero-copy operation. For this to work, $out_fh should refer
+        to a socket, and $in_fh should refer to mmap'able file.
+
+        If the native sendfile call fails or is not implemented, it will be
+        emulated, so you can call "aio_sendfile" on any type of filehandle
+        regardless of the limitations of the operating system.
+
+        Please note, however, that "aio_sendfile" can read more bytes from
+        $in_fh than are written, and there is no way to find out how many
+        bytes have been read from "aio_sendfile" alone, as "aio_sendfile"
+        only provides the number of bytes written to $out_fh. Only if the
+        result value equals $length one can assume that $length bytes have
+        been read.
+
+    aio_readahead $fh,$offset,$length, $callback->($retval)
         "aio_readahead" populates the page cache with data from a file so
         that subsequent reads from that file will not block on disk I/O. The
         $offset argument specifies the starting point from which data is to
@@ -147,8 +169,8 @@ FUNCTIONS
         will be emulated by simply reading the data, which would have a
         similar effect.
 
-    aio_stat $fh_or_path, $callback
-    aio_lstat $fh, $callback
+    aio_stat $fh_or_path, $callback->($status)
+    aio_lstat $fh, $callback->($status)
         Works like perl's "stat" or "lstat" in void context. The callback
         will be called after the stat and the results will be available
         using "stat _" or "-s _" etc...
@@ -168,19 +190,72 @@ FUNCTIONS
               print "size is ", -s _, "\n";
            };
 
-    aio_unlink $pathname, $callback
+    aio_unlink $pathname, $callback->($status)
         Asynchronously unlink (delete) a file and call the callback with the
         result code.
 
-    aio_rmdir $pathname, $callback
+    aio_rmdir $pathname, $callback->($status)
         Asynchronously rmdir (delete) a directory and call the callback with
         the result code.
 
-    aio_fsync $fh, $callback
+    aio_readdir $pathname $callback->($entries)
+        Unlike the POSIX call of the same name, "aio_readdir" reads an
+        entire directory (i.e. opendir + readdir + closedir). The entries
+        will not be sorted, and will NOT include the "." and ".." entries.
+
+        The callback a single argument which is either "undef" or an
+        array-ref with the filenames.
+
+    aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
+        Scans a directory (similar to "aio_readdir") and tries to separate
+        the entries of directory $path into two sets of names, ones you can
+        recurse into (directories), and ones you cannot recurse into
+        (everything else).
+
+        "aio_scandir" is a composite request that consists of many
+        aio-primitives. $maxreq specifies the maximum number of outstanding
+        aio requests that this function generates. If it is "<= 0", then a
+        suitable default will be chosen (currently 8).
+
+        On error, the callback is called without arguments, otherwise it
+        receives two array-refs with path-relative entry names.
+
+        Example:
+
+           aio_scandir $dir, 0, sub {
+              my ($dirs, $nondirs) = @_;
+              print "real directories: @$dirs\n";
+              print "everything else: @$nondirs\n";
+           };
+
+        Implementation notes.
+
+        The "aio_readdir" cannot be avoided, but "stat()"'ing every entry
+        can.
+
+        After reading the directory, the modification time, size etc. of the
+        directory before and after the readdir is checked, and if they
+        match, the link count will be used to decide how many entries are
+        directories (if >= 2). Otherwise, no knowledge of the number of
+        subdirectories will be assumed.
+
+        Then entires will be sorted into likely directories (everything
+        without a non-initial dot) and likely non-directories (everything
+        else). Then every entry + "/." will be "stat"'ed, likely directories
+        first. This is often faster because filesystems might detect the
+        type of the entry without reading the inode data (e.g. ext2s
+        filetype feature). If that succeeds, it assumes that the entry is a
+        directory or a symlink to directory (which will be checked
+        seperately).
+
+        If the known number of directories has been reached, the rest of the
+        entries is assumed to be non-directories.
+
+    aio_fsync $fh, $callback->($status)
         Asynchronously call fsync on the given filehandle and call the
         callback with the fsync result code.
 
-    aio_fdatasync $fh, $callback
+    aio_fdatasync $fh, $callback->($status)
         Asynchronously call fdatasync on the given filehandle and call the
         callback with the fdatasync result code.
 

@@ -2343,6 +2343,136 @@ cat >>confdefs.h <<\_ACEOF
 _ACEOF
 
 
+echo "$as_me:$LINENO: checking for readdir_r" >&5
+echo $ECHO_N "checking for readdir_r... $ECHO_C" >&6
+if test "${ac_cv_readdir_r+set}" = set; then
+  echo $ECHO_N "(cached) $ECHO_C" >&6
+else
+  cat >conftest.$ac_ext <<_ACEOF
+
+#include <dirent.h>
+int main(void)
+{
+   DIR *dir = 0;
+   struct dirent ent, *eres;
+   int res = readdir_r (dir, &ent, &eres);
+   return 0;
+}
+
+_ACEOF
+rm -f conftest.$ac_objext conftest$ac_exeext
+if { (eval echo "$as_me:$LINENO: \"$ac_link\"") >&5
+  (eval $ac_link) 2>conftest.er1
+  ac_status=$?
+  grep -v '^ *+' conftest.er1 >conftest.err
+  rm -f conftest.er1
+  cat conftest.err >&5
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); } &&
+	 { ac_try='test -z "$ac_c_werror_flag"			 || test ! -s conftest.err'
+  { (eval echo "$as_me:$LINENO: \"$ac_try\"") >&5
+  (eval $ac_try) 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; } &&
+	 { ac_try='test -s conftest$ac_exeext'
+  { (eval echo "$as_me:$LINENO: \"$ac_try\"") >&5
+  (eval $ac_try) 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; }; then
+  ac_cv_readdir_r=yes
+else
+  echo "$as_me: failed program was:" >&5
+sed 's/^/| /' conftest.$ac_ext >&5
+
+ac_cv_readdir_r=no
+fi
+rm -f conftest.err conftest.$ac_objext \
+      conftest$ac_exeext conftest.$ac_ext
+fi
+echo "$as_me:$LINENO: result: $ac_cv_readdir_r" >&5
+echo "${ECHO_T}$ac_cv_readdir_r" >&6
+test $ac_cv_readdir_r = yes &&
+cat >>confdefs.h <<\_ACEOF
+#define HAVE_READDIR_R 1
+_ACEOF
+
+
+echo "$as_me:$LINENO: checking for sendfile" >&5
+echo $ECHO_N "checking for sendfile... $ECHO_C" >&6
+if test "${ac_cv_sendfile+set}" = set; then
+  echo $ECHO_N "(cached) $ECHO_C" >&6
+else
+  cat >conftest.$ac_ext <<_ACEOF
+
+# include <sys/types.h>
+#if __linux
+# include <sys/sendfile.h>
+#elif __freebsd
+# include <sys/socket.h>
+# include <sys/uio.h>
+#elif __hpux
+# include <sys/socket.h>
+#else
+# error unsupported architecture
+#endif
+int main(void)
+{
+   int fd = 0;
+   off_t offset = 1;
+   size_t count = 2;
+   ssize_t res;
+#if __linux
+   res = sendfile (fd, fd, offset, count);
+#elif __freebsd
+   res = sendfile (fd, fd, offset, count, 0, &offset, 0);
+#elif __hpux
+   res = sendfile (fd, fd, offset, count, 0, 0);
+#endif
+   return 0;
+}
+
+_ACEOF
+rm -f conftest.$ac_objext conftest$ac_exeext
+if { (eval echo "$as_me:$LINENO: \"$ac_link\"") >&5
+  (eval $ac_link) 2>conftest.er1
+  ac_status=$?
+  grep -v '^ *+' conftest.er1 >conftest.err
+  rm -f conftest.er1
+  cat conftest.err >&5
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); } &&
+	 { ac_try='test -z "$ac_c_werror_flag"			 || test ! -s conftest.err'
+  { (eval echo "$as_me:$LINENO: \"$ac_try\"") >&5
+  (eval $ac_try) 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; } &&
+	 { ac_try='test -s conftest$ac_exeext'
+  { (eval echo "$as_me:$LINENO: \"$ac_try\"") >&5
+  (eval $ac_try) 2>&5
+  ac_status=$?
+  echo "$as_me:$LINENO: \$? = $ac_status" >&5
+  (exit $ac_status); }; }; then
+  ac_cv_sendfile=yes
+else
+  echo "$as_me: failed program was:" >&5
+sed 's/^/| /' conftest.$ac_ext >&5
+
+ac_cv_sendfile=no
+fi
+rm -f conftest.err conftest.$ac_objext \
+      conftest$ac_exeext conftest.$ac_ext
+fi
+echo "$as_me:$LINENO: result: $ac_cv_sendfile" >&5
+echo "${ECHO_T}$ac_cv_sendfile" >&6
+test $ac_cv_sendfile = yes &&
+cat >>confdefs.h <<\_ACEOF
+#define HAVE_SENDFILE 1
+_ACEOF
+
+
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
 # tests run on this system so they can be shared between configure

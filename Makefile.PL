@@ -15,7 +15,8 @@ If you get it to work, tell me how (maybe you need to specify magical link
 flags despite man pthread telling me otherwise, maybe yo need special
 library, maybe you need magical preprocessor symbols, maybe you need to
 recompile or re-link perl with threads enabled (a bad idea) - I have no
-idea, and I no longer care).
+idea, and I no longer care). Or maybe I do, but am frustrated about the
+continous "we are different=broken" attitude.
 
 EOF
 }
