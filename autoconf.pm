@@ -22,7 +22,7 @@ sub run_script(;$$) {
     $ENV{CPPFLAGS} = $Config{cppflags};
     $ENV{CFLAGS}   = $Config{ccflags};
     $ENV{LDFLAGS}  = $Config{ldflags};
-    $ENV{LIBS}     = $Config{libs};
+    $ENV{LIBS}     = "";
     $ENV{LINKER}   = $Config{ld}; # nonstandard
 
     my $status = system $ENV{SHELL}, -c => "cd \Q$wd\E && \Q$script\E --prefix \Q$Config{prefix}\E";
