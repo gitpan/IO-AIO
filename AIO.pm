@@ -69,7 +69,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = '1.7';
+   $VERSION = '1.71';
 
    @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                 aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
@@ -347,7 +347,7 @@ sub aio_scandir($$$) {
                   # finished
                   undef $statcb;
                   undef $schedcb;
-                  $cb->(\@dirs, \@nondirs);
+                  $cb->(\@dirs, \@nondirs) if $cb;
                   undef $cb;
                }
             };
