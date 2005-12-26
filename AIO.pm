@@ -17,6 +17,10 @@ IO::AIO - Asynchronous Input/Output
     $_[0] > 0 or die "read error: $!";
  };
 
+ # AnyEvent
+ open my $fh, "<&=" . IO::AIO::poll_fileno or die "$!";
+ my $w = AnyEvent->io (fh => $fh, poll => 'r', cb => sub { IO::AIO::poll_cb });
+
  # Event
  Event->io (fd => IO::AIO::poll_fileno,
             poll => 'r',
@@ -65,7 +69,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = '1.61';
+   $VERSION = '1.7';
 
    @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                 aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
@@ -317,7 +321,7 @@ sub aio_scandir($$$) {
                # if nlink == 2, we are finished
                # on non-posix-fs's, we rely on nlink < 2
                $ndirs = (stat _)[3] - 2
-                  or $cb->([], $entries);
+                  or return $cb->([], $entries);
             }
 
             # sort into likely dirs and likely nondirs

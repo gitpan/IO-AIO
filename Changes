@@ -1,8 +1,14 @@
 Revision history for IO::AIO
 
+TODO: better autoconf.pm that can return LIBS etc.
+
+1.7  Mon Dec 26 19:29:48 CET 2005
+        - aio_scandir errornously called callback twice in some cases.
+	- added AnyEvent example.
+
 1.61 Wed Sep  7 19:40:42 CEST 2005
 	- no longer include $Config{libs}, as distros include too much
-          garbage in their that is not installed on typical systems
+          garbage in there that is not installed on typical systems
           (for example, debian links perl against -lgdbm and many more
           libraries despite perl not needing it, slowing down startup and
           wasting memory).
