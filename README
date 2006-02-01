@@ -202,7 +202,7 @@ FUNCTIONS
         Asynchronously rmdir (delete) a directory and call the callback with
         the result code.
 
-    aio_readdir $pathname $callback->($entries)
+    aio_readdir $pathname, $callback->($entries)
         Unlike the POSIX call of the same name, "aio_readdir" reads an
         entire directory (i.e. opendir + readdir + closedir). The entries
         will not be sorted, and will NOT include the "." and ".." entries.

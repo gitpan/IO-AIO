@@ -7,16 +7,14 @@ require "autoconf.pm";
 if ($^O =~ /freebsd/i) {
    print <<EOF;
 
-This package seems to deadlock under FreeBSD. As documentation on FreeBSD
-threading is sorely lacking and confusing, I'll just call FreeBSD broken
-with regards to threading.
+This package seems to deadlock or otherwise misbehave under FreeBSD. As
+documentation on FreeBSD threading is sorely lacking and confusing, I'll
+just call FreeBSD broken with regards to threading.
 
-If you get it to work, tell me how (maybe you need to specify magical link
-flags despite man pthread telling me otherwise, maybe yo need special
-library, maybe you need magical preprocessor symbols, maybe you need to
-recompile or re-link perl with threads enabled (a bad idea) - I have no
-idea, and I no longer care). Or maybe I do, but am frustrated about the
-continous "we are different=broken" attitude.
+If you find out whats wrong, please tell me.
+
+Some people had luck with using OPTIMIZE=-O instead of -O2, so you might
+want to try that.
 
 EOF
 }

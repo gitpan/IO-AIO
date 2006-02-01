@@ -69,7 +69,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = '1.71';
+   $VERSION = '1.72';
 
    @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                 aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
@@ -239,7 +239,7 @@ result code.
 Asynchronously rmdir (delete) a directory and call the callback with the
 result code.
 
-=item aio_readdir $pathname $callback->($entries)
+=item aio_readdir $pathname, $callback->($entries)
 
 Unlike the POSIX call of the same name, C<aio_readdir> reads an entire
 directory (i.e. opendir + readdir + closedir). The entries will not be
@@ -300,7 +300,7 @@ sub aio_scandir($$$) {
 
    # stat once
    aio_stat $path, sub {
-      $cb->() if $_[0];
+      return $cb->() if $_[0];
       my $hash1 = join ":", (stat _)[0,1,3,7,9];
 
       # read the directory entries

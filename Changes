@@ -2,6 +2,10 @@ Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
 
+1.72 Thu Feb  2 00:40:44 CET 2006
+	- another minor bug in aio_scandir, again, the callback was called
+          twice when the directory can't be stat'ed.
+
 1.71 Mon Dec 26 20:20:03 CET 2005
 	- grr, another minor bug in aio_scandir, this time resulting
           in a runtime error.
