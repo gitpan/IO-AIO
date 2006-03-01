@@ -247,7 +247,7 @@ FUNCTIONS
         without a non-initial dot) and likely non-directories (everything
         else). Then every entry + "/." will be "stat"'ed, likely directories
         first. This is often faster because filesystems might detect the
-        type of the entry without reading the inode data (e.g. ext2s
+        type of the entry without reading the inode data (e.g. ext2fs
         filetype feature). If that succeeds, it assumes that the entry is a
         directory or a symlink to directory (which will be checked
         seperately).

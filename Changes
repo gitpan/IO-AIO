@@ -2,6 +2,12 @@ Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
 
+1.73 Wed Mar  1 22:49:32 CET 2006
+	- codename "jost"
+        - AIX/Solaris(?) aren't being helpful again, hardcode a value
+          for NAME_MAX and drive with your eyes closed (reported by
+          wcooley@nakedape.cc).
+
 1.72 Thu Feb  2 00:40:44 CET 2006
 	- another minor bug in aio_scandir, again, the callback was called
           twice when the directory can't be stat'ed.

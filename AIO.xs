@@ -33,6 +33,11 @@
 # endif
 #endif
 
+/* used for struct dirent, AIX doesn't provide it */
+#ifndef NAME_MAX
+# define NAME_MAX 4096
+#endif
+
 #if __ia64
 # define STACKSIZE 65536
 #else

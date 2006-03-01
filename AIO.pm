@@ -69,7 +69,7 @@ use base 'Exporter';
 use Fcntl ();
 
 BEGIN {
-   $VERSION = '1.72';
+   $VERSION = '1.73';
 
    @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                 aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
@@ -284,7 +284,7 @@ Then entires will be sorted into likely directories (everything without a
 non-initial dot) and likely non-directories (everything else).  Then every
 entry + C</.> will be C<stat>'ed, likely directories first. This is often
 faster because filesystems might detect the type of the entry without
-reading the inode data (e.g. ext2s filetype feature). If that succeeds,
+reading the inode data (e.g. ext2fs filetype feature). If that succeeds,
 it assumes that the entry is a directory or a symlink to directory (which
 will be checked seperately).
 
