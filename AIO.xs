@@ -10,6 +10,7 @@
 #include <pthread.h>
 
 #include <stddef.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <limits.h>
@@ -51,9 +52,9 @@ enum {
   REQ_SENDFILE,
   REQ_STAT, REQ_LSTAT, REQ_FSTAT,
   REQ_FSYNC, REQ_FDATASYNC,
-  REQ_UNLINK, REQ_RMDIR,
+  REQ_UNLINK, REQ_RMDIR, REQ_RENAME,
   REQ_READDIR,
-  REQ_SYMLINK,
+  REQ_LINK, REQ_SYMLINK,
 };
 
 typedef struct aio_cb {
@@ -667,6 +668,8 @@ aio_proc (void *thr_arg)
           case REQ_CLOSE:     req->result = close     (req->fd); break;
           case REQ_UNLINK:    req->result = unlink    (req->dataptr); break;
           case REQ_RMDIR:     req->result = rmdir     (req->dataptr); break;
+          case REQ_RENAME:    req->result = rename    (req->data2ptr, req->dataptr); break;
+          case REQ_LINK:      req->result = link      (req->data2ptr, req->dataptr); break;
           case REQ_SYMLINK:   req->result = symlink   (req->data2ptr, req->dataptr); break;
 
           case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
@@ -782,22 +785,27 @@ PROTOTYPES: ENABLE
 
 BOOT:
 {
+	HV *stash = gv_stashpv ("IO::AIO", 1);
+        newCONSTSUB (stash, "EXDEV",    newSViv (EXDEV));
+        newCONSTSUB (stash, "O_RDONLY", newSViv (O_RDONLY));
+        newCONSTSUB (stash, "O_WRONLY", newSViv (O_WRONLY));
+
 	create_pipe ();
         pthread_atfork (atfork_prepare, atfork_parent, atfork_child);
 }
 
 void
-min_parallel(nthreads)
+min_parallel (nthreads)
 	int	nthreads
 	PROTOTYPE: $
 
 void
-max_parallel(nthreads)
+max_parallel (nthreads)
 	int	nthreads
 	PROTOTYPE: $
 
 int
-max_outstanding(nreqs)
+max_outstanding (nreqs)
 	int nreqs
         PROTOTYPE: $
         CODE:
@@ -805,7 +813,7 @@ max_outstanding(nreqs)
         max_outstanding = nreqs;
 
 void
-aio_open(pathname,flags,mode,callback=&PL_sv_undef)
+aio_open (pathname,flags,mode,callback=&PL_sv_undef)
 	SV *	pathname
         int	flags
         int	mode
@@ -825,7 +833,7 @@ aio_open(pathname,flags,mode,callback=&PL_sv_undef)
 }
 
 void
-aio_close(fh,callback=&PL_sv_undef)
+aio_close (fh,callback=&PL_sv_undef)
 	SV *	fh
         SV *	callback
 	PROTOTYPE: $;$
@@ -845,7 +853,7 @@ aio_close(fh,callback=&PL_sv_undef)
 }
 
 void
-aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
+aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 	SV *	fh
         UV	offset
         UV	length
@@ -909,7 +917,7 @@ aio_read(fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 }
 
 void
-aio_sendfile(out_fh,in_fh,in_offset,length,callback=&PL_sv_undef)
+aio_sendfile (out_fh,in_fh,in_offset,length,callback=&PL_sv_undef)
         SV *	out_fh
         SV *	in_fh
         UV	in_offset
@@ -932,7 +940,7 @@ aio_sendfile(out_fh,in_fh,in_offset,length,callback=&PL_sv_undef)
 }
 
 void
-aio_readahead(fh,offset,length,callback=&PL_sv_undef)
+aio_readahead (fh,offset,length,callback=&PL_sv_undef)
         SV *	fh
         UV	offset
         IV	length
@@ -952,7 +960,7 @@ aio_readahead(fh,offset,length,callback=&PL_sv_undef)
 }
 
 void
-aio_stat(fh_or_path,callback=&PL_sv_undef)
+aio_stat (fh_or_path,callback=&PL_sv_undef)
         SV *		fh_or_path
         SV *		callback
         ALIAS:
@@ -986,12 +994,13 @@ aio_stat(fh_or_path,callback=&PL_sv_undef)
 }
 
 void
-aio_unlink(pathname,callback=&PL_sv_undef)
+aio_unlink (pathname,callback=&PL_sv_undef)
 	SV * pathname
 	SV * callback
         ALIAS:
-           aio_unlink = REQ_UNLINK
-           aio_rmdir  = REQ_RMDIR
+           aio_unlink  = REQ_UNLINK
+           aio_rmdir   = REQ_RMDIR
+           aio_readdir = REQ_READDIR
 	CODE:
 {
 	dREQ;
@@ -1004,15 +1013,19 @@ aio_unlink(pathname,callback=&PL_sv_undef)
 }
 
 void
-aio_symlink(oldpath,newpath,callback=&PL_sv_undef)
+aio_link (oldpath,newpath,callback=&PL_sv_undef)
 	SV * oldpath
 	SV * newpath
 	SV * callback
+        ALIAS:
+           aio_link    = REQ_LINK
+           aio_symlink = REQ_SYMLINK
+           aio_rename  = REQ_RENAME
 	CODE:
 {
 	dREQ;
 	
-        req->type = REQ_SYMLINK;
+        req->type = ix;
 	req->fh = newSVsv (oldpath);
 	req->data2ptr = SvPVbyte_nolen (req->fh);
 	req->data = newSVsv (newpath);
@@ -1022,22 +1035,7 @@ aio_symlink(oldpath,newpath,callback=&PL_sv_undef)
 }
 
 void
-aio_readdir(pathname,callback=&PL_sv_undef)
-	SV * pathname
-	SV * callback
-	CODE:
-{
-	dREQ;
-	
-        req->type = REQ_READDIR;
-	req->data = newSVsv (pathname);
-	req->dataptr = SvPVbyte_nolen (req->data);
-	
-	send_req (req);
-}
-
-void
-flush()
+flush ()
 	PROTOTYPE:
 	CODE:
         while (nreqs)

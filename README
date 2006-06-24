@@ -136,6 +136,23 @@ FUNCTIONS
               print "read $_[0] bytes: <$buffer>\n";
            };
 
+    aio_move $srcpath, $dstpath, $callback->($status)
+        [EXPERIMENTAL]
+
+        Try to move the *file* (directories not supported as either source
+        or destination) from $srcpath to $dstpath and call the callback with
+        the 0 (error) or -1 ok.
+
+        This is a composite request that tries to rename(2) the file first.
+        If rename files with "EXDEV", it creates the destination file with
+        mode 0200 and copies the contents of the source file into it using
+        "aio_sendfile", followed by restoring atime, mtime, access mode and
+        uid/gid, in that order, and unlinking the $srcpath.
+
+        If an error occurs, the partial destination file will be unlinked,
+        if possible, except when setting atime, mtime, access mode and
+        uid/gid, where errors are being ignored.
+
     aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
         Tries to copy $length bytes from $in_fh to $out_fh. It starts
         reading at byte offset $in_offset, and starts writing at the current
@@ -197,6 +214,19 @@ FUNCTIONS
     aio_unlink $pathname, $callback->($status)
         Asynchronously unlink (delete) a file and call the callback with the
         result code.
+
+    aio_link $srcpath, $dstpath, $callback->($status)
+        Asynchronously create a new link to the existing object at $srcpath
+        at the path $dstpath and call the callback with the result code.
+
+    aio_symlink $srcpath, $dstpath, $callback->($status)
+        Asynchronously create a new symbolic link to the existing object at
+        $srcpath at the path $dstpath and call the callback with the result
+        code.
+
+    aio_rename $srcpath, $dstpath, $callback->($status)
+        Asynchronously rename the object at $srcpath to $dstpath, just as
+        rename(2) and call the callback with the result code.
 
     aio_rmdir $pathname, $callback->($status)
         Asynchronously rmdir (delete) a directory and call the callback with

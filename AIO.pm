@@ -63,22 +63,20 @@ C<aio_> functions) recursively.
 package IO::AIO;
 
 no warnings;
+use strict 'vars';
 
 use base 'Exporter';
 
-use Fcntl ();
-
 BEGIN {
-   $VERSION = '1.73';
+   our $VERSION = '1.8';
 
-   @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
-                aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
-                aio_fsync aio_fdatasync aio_readahead);
-   @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel
-                   max_outstanding nreqs);
+   our @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
+                    aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
+                    aio_fsync aio_fdatasync aio_readahead aio_rename aio_link aio_move);
+   our @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
 
    require XSLoader;
-   XSLoader::load IO::AIO, $VERSION;
+   XSLoader::load ("IO::AIO", $VERSION);
 }
 
 =head1 FUNCTIONS
@@ -170,6 +168,71 @@ offset C<0> within the scalar:
       print "read $_[0] bytes: <$buffer>\n";
    };
 
+=item aio_move $srcpath, $dstpath, $callback->($status)
+
+[EXPERIMENTAL]
+
+Try to move the I<file> (directories not supported as either source or destination)
+from C<$srcpath> to C<$dstpath> and call the callback with the C<0> (error) or C<-1> ok.
+
+This is a composite request that tries to rename(2) the file first. If
+rename files with C<EXDEV>, it creates the destination file with mode 0200
+and copies the contents of the source file into it using C<aio_sendfile>,
+followed by restoring atime, mtime, access mode and uid/gid, in that
+order, and unlinking the C<$srcpath>.
+
+If an error occurs, the partial destination file will be unlinked, if
+possible, except when setting atime, mtime, access mode and uid/gid, where
+errors are being ignored.
+
+=cut
+
+sub aio_move($$$) {
+   my ($src, $dst, $cb) = @_;
+
+   aio_rename $src, $dst, sub {
+      if ($_[0] && $! == EXDEV) {
+         aio_open $src, O_RDONLY, 0, sub {
+            if (my $src_fh = $_[0]) {
+               my @stat = stat $src_fh;
+
+               aio_open $dst, O_WRONLY, 0200, sub {
+                  if (my $dst_fh = $_[0]) {
+                     aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
+                        close $src_fh;
+
+                        if ($_[0] == $stat[7]) {
+                           utime $stat[8], $stat[9], $dst;
+                           chmod $stat[2] & 07777, $dst_fh;
+                           chown $stat[4], $stat[5], $dst_fh;
+                           close $dst_fh;
+
+                           aio_unlink $src, sub {
+                              $cb->($_[0]);
+                           };
+                        } else {
+                           my $errno = $!;
+                           aio_unlink $dst, sub {
+                              $! = $errno;
+                              $cb->(-1);
+                           };
+                        }
+                     };
+                  } else {
+                     $cb->(-1);
+                  }
+               },
+
+            } else {
+               $cb->(-1);
+            }
+         };
+      } else {
+         $cb->($_[0]);
+      }
+   };
+}
+
 =item aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
 
 Tries to copy C<$length> bytes from C<$in_fh> to C<$out_fh>. It starts
@@ -233,6 +296,21 @@ Example: Print the length of F</etc/passwd>:
 
 Asynchronously unlink (delete) a file and call the callback with the
 result code.
+
+=item aio_link $srcpath, $dstpath, $callback->($status)
+
+Asynchronously create a new link to the existing object at C<$srcpath> at
+the path C<$dstpath> and call the callback with the result code.
+
+=item aio_symlink $srcpath, $dstpath, $callback->($status)
+
+Asynchronously create a new symbolic link to the existing object at C<$srcpath> at
+the path C<$dstpath> and call the callback with the result code.
+
+=item aio_rename $srcpath, $dstpath, $callback->($status)
+
+Asynchronously rename the object at C<$srcpath> to C<$dstpath>, just as
+rename(2) and call the callback with the result code.
 
 =item aio_rmdir $pathname, $callback->($status)
 

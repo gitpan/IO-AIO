@@ -4,8 +4,16 @@ use Config;
 
 require "autoconf.pm";
 
-if ($^O =~ /freebsd/i) {
-   print <<EOF;
+if ($^O =~ /win32/i or $^O =~ /mswin/) {
+
+   # configuration on windows is hardcoded - as always
+
+   die "your platform is not standards-compliant, you have to port this module first\n";#d#
+
+} else {
+
+   if ($^O =~ /freebsd/i) {
+      print <<EOF;
 
 This package seems to deadlock or otherwise misbehave under FreeBSD. As
 documentation on FreeBSD threading is sorely lacking and confusing, I'll
@@ -17,10 +25,11 @@ Some people had luck with using OPTIMIZE=-O instead of -O2, so you might
 want to try that.
 
 EOF
-}
+   }
 
-autoconf::run_script()
-   and die "\nconfigure failed, check it's output above and autoconf/config.log\n\n";
+   autoconf::run_script()
+      and die "\nconfigure failed, check it's output above and autoconf/config.log\n\n";
+}
 
 my $mm = MM->new({
     dist         => {
