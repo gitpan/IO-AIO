@@ -59,10 +59,11 @@ aio_symlink "\\test\\", $some_link, sub {
 pcb;
 unlink $some_link;
 
-# test unlinking and rmdir, also test order of these
+# test unlinking and rmdir
 aio_unlink $some_file, sub {
    ok (!shift);
 };
+pcb;
 aio_rmdir $some_dir, sub {
    ok (!shift);
 };

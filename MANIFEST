@@ -11,7 +11,10 @@ t/02_read.t
 t/03_errors.t
 t/04_fork.t
 t/05_readdir.t
+t/06_group.t
+t/07_feeder.t
 t/aio_test_common.pm
+typemap
 genac
 autoconf.pm
 autoconf/configure.ac

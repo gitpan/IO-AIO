@@ -2,6 +2,31 @@ Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
 
+2.0  Thu Oct 26 18:27:58 CEST 2006
+	- minor incompatibility: max_outstanding semantics have changed.
+	- major rewrite, consider all functionality EXPERIMENTAL.
+        - aio requests can be cancelled.
+        - callbacks can be (re-)set later.
+        - aio requests can have choose 9 priorities.
+        - add aio_group: aio requests can be grouped
+          into composite requests.
+        - generator interface for groups.
+        - add IO::AIO::poll_some.
+        - major documentation improvements.
+        - very minor bugfixes.
+        - add aio_nop for dummy requests.
+        - add aio_busy mainly for benchmarking and debugging.
+        - use "fast" mutexes on linux.
+        - use dynamic (and larger) buffers instead of
+          putting them onto the stack.
+        - optimise x86 and amd64 a bit.
+        - better error checking when ENOMEM.
+        - hopefully fix mem and dirp leaks on fork.
+        - warn about broken perl malloc.
+        - compiles on cygwin (but pread is broken on cygwin
+          which is not detected by autoconf, so you have to
+          edit autoconf/config.h yourself to enable emulation).
+
 1.8  Sat Jun 24 22:20:44 CEST 2006
 	- add and/or document aio_rename, aio_link, aio_symlink and aio_move.
 

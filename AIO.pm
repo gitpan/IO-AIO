@@ -17,46 +17,106 @@ IO::AIO - Asynchronous Input/Output
     $_[0] > 0 or die "read error: $!";
  };
 
- # AnyEvent
+ # version 2+ has request and group objects
+ use IO::AIO 2;
+
+ aioreq_pri 4; # give next request a very high priority
+ my $req = aio_unlink "/tmp/file", sub { };
+ $req->cancel; # cancel request if still in queue
+
+ my $grp = aio_group sub { print "all stats done\n" };
+ add $grp aio_stat "..." for ...;
+
+ # AnyEvent integration
  open my $fh, "<&=" . IO::AIO::poll_fileno or die "$!";
  my $w = AnyEvent->io (fh => $fh, poll => 'r', cb => sub { IO::AIO::poll_cb });
 
- # Event
+ # Event integration
  Event->io (fd => IO::AIO::poll_fileno,
             poll => 'r',
             cb => \&IO::AIO::poll_cb);
 
- # Glib/Gtk2
+ # Glib/Gtk2 integration
  add_watch Glib::IO IO::AIO::poll_fileno,
            in => sub { IO::AIO::poll_cb; 1 };
 
- # Tk
+ # Tk integration
  Tk::Event::IO->fileevent (IO::AIO::poll_fileno, "",
                            readable => \&IO::AIO::poll_cb);
 
- # Danga::Socket
+ # Danga::Socket integration
  Danga::Socket->AddOtherFds (IO::AIO::poll_fileno =>
                              \&IO::AIO::poll_cb);
-
 
 =head1 DESCRIPTION
 
 This module implements asynchronous I/O using whatever means your
 operating system supports.
 
-Currently, a number of threads are started that execute your read/writes
-and signal their completion. You don't need thread support in your libc or
-perl, and the threads created by this module will not be visible to the
-pthreads library. In the future, this module might make use of the native
-aio functions available on many operating systems. However, they are often
-not well-supported (Linux doesn't allow them on normal files currently,
-for example), and they would only support aio_read and aio_write, so the
-remaining functionality would have to be implemented using threads anyway.
+In this version, a number of threads are started that execute your
+requests and signal their completion. You don't need thread support
+in perl, and the threads created by this module will not be visible
+to perl. In the future, this module might make use of the native aio
+functions available on many operating systems. However, they are often
+not well-supported or restricted (Linux doesn't allow them on normal
+files currently, for example), and they would only support aio_read and
+aio_write, so the remaining functionality would have to be implemented
+using threads anyway.
 
-Although the module will work with in the presence of other threads, it is
-currently not reentrant, so use appropriate locking yourself, always call
-C<poll_cb> from within the same thread, or never call C<poll_cb> (or other
-C<aio_> functions) recursively.
+Although the module will work with in the presence of other (Perl-)
+threads, it is currently not reentrant in any way, so use appropriate
+locking yourself, always call C<poll_cb> from within the same thread, or
+never call C<poll_cb> (or other C<aio_> functions) recursively.
+
+=head1 REQUEST ANATOMY AND LIFETIME
+
+Every C<aio_*> function creates a request. which is a C data structure not
+directly visible to Perl.
+
+If called in non-void context, every request function returns a Perl
+object representing the request. In void context, nothing is returned,
+which saves a bit of memory.
+
+The perl object is a fairly standard ref-to-hash object. The hash contents
+are not used by IO::AIO so you are free to store anything you like in it.
+
+During their existance, aio requests travel through the following states,
+in order:
+
+=over 4
+
+=item ready
+
+Immediately after a request is created it is put into the ready state,
+waiting for a thread to execute it.
+
+=item execute
+
+A thread has accepted the request for processing and is currently
+executing it (e.g. blocking in read).
+
+=item pending
+
+The request has been executed and is waiting for result processing.
+
+While request submission and execution is fully asynchronous, result
+processing is not and relies on the perl interpreter calling C<poll_cb>
+(or another function with the same effect).
+
+=item result
+
+The request results are processed synchronously by C<poll_cb>.
+
+The C<poll_cb> function will process all outstanding aio requests by
+calling their callbacks, freeing memory associated with them and managing
+any groups they are contained in.
+
+=item done
+
+Request has reached the end of its lifetime and holds no resources anymore
+(except possibly for the Perl object, but its connection to the actual
+aio request is severed and calling its methods will either do nothing or
+result in a runtime error).
 
 =cut
 
@@ -68,12 +128,17 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '1.8';
+   our $VERSION = '2.0';
 
-   our @EXPORT = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
-                    aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
-                    aio_fsync aio_fdatasync aio_readahead aio_rename aio_link aio_move);
-   our @EXPORT_OK = qw(poll_fileno poll_cb min_parallel max_parallel max_outstanding nreqs);
+   our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
+                     aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
+                     aio_fsync aio_fdatasync aio_readahead aio_rename aio_link aio_move
+                     aio_group aio_nop);
+   our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
+   our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
+                       min_parallel max_parallel nreqs nready npending);
+
+   @IO::AIO::GRP::ISA = 'IO::AIO::REQ';
 
    require XSLoader;
    XSLoader::load ("IO::AIO", $VERSION);
@@ -94,6 +159,9 @@ syscall has been executed asynchronously.
 All functions expecting a filehandle keep a copy of the filehandle
 internally until the request has finished.
 
+All requests return objects of type L<IO::AIO::REQ> that allow further
+manipulation of those requests while they are in-flight.
+
 The pathnames you pass to these routines I<must> be absolute and
 encoded in byte form. The reason for the former is that at the time the
 request is being executed, the current working directory could have
@@ -108,6 +176,37 @@ environment, d) use Glib::filename_from_unicode on unicode filenames or e)
 use something else.
 
 =over 4
+
+=item $prev_pri = aioreq_pri [$pri]
+
+Returns the priority value that would be used for the next request and, if
+C<$pri> is given, sets the priority for the next aio request.
+
+The default priority is C<0>, the minimum and maximum priorities are C<-4>
+and C<4>, respectively. Requests with higher priority will be serviced
+first.
+
+The priority will be reset to C<0> after each call to one of the C<aio_*>
+functions.
+
+Example: open a file with low priority, then read something from it with
+higher priority so the read request is serviced before other low priority
+open requests (potentially spamming the cache):
+
+   aioreq_pri -3;
+   aio_open ..., sub {
+      return unless $_[0];
+
+      aioreq_pri -2;
+      aio_read $_[0], ..., sub {
+         ...
+      };
+   };
+
+=item aioreq_nice $pri_adjust
+
+Similar to C<aioreq_pri>, but subtracts the given value from the current
+priority, so effects are cumulative.
 
 =item aio_open $pathname, $flags, $mode, $callback->($fh)
 
@@ -170,10 +269,9 @@ offset C<0> within the scalar:
 
 =item aio_move $srcpath, $dstpath, $callback->($status)
 
-[EXPERIMENTAL]
-
-Try to move the I<file> (directories not supported as either source or destination)
-from C<$srcpath> to C<$dstpath> and call the callback with the C<0> (error) or C<-1> ok.
+Try to move the I<file> (directories not supported as either source or
+destination) from C<$srcpath> to C<$dstpath> and call the callback with
+the C<0> (error) or C<-1> ok.
 
 This is a composite request that tries to rename(2) the file first. If
 rename files with C<EXDEV>, it creates the destination file with mode 0200
@@ -190,15 +288,22 @@ errors are being ignored.
 sub aio_move($$$) {
    my ($src, $dst, $cb) = @_;
 
-   aio_rename $src, $dst, sub {
+   my $pri = aioreq_pri;
+   my $grp = aio_group $cb;
+
+   aioreq_pri $pri;
+   add $grp aio_rename $src, $dst, sub {
       if ($_[0] && $! == EXDEV) {
-         aio_open $src, O_RDONLY, 0, sub {
+         aioreq_pri $pri;
+         add $grp aio_open $src, O_RDONLY, 0, sub {
             if (my $src_fh = $_[0]) {
                my @stat = stat $src_fh;
 
-               aio_open $dst, O_WRONLY, 0200, sub {
+               aioreq_pri $pri;
+               add $grp aio_open $dst, O_WRONLY, 0200, sub {
                   if (my $dst_fh = $_[0]) {
-                     aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
+                     aioreq_pri $pri;
+                     add $grp aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
                         close $src_fh;
 
                         if ($_[0] == $stat[7]) {
@@ -207,30 +312,34 @@ sub aio_move($$$) {
                            chown $stat[4], $stat[5], $dst_fh;
                            close $dst_fh;
 
-                           aio_unlink $src, sub {
-                              $cb->($_[0]);
+                           aioreq_pri $pri;
+                           add $grp aio_unlink $src, sub {
+                              $grp->result ($_[0]);
                            };
                         } else {
                            my $errno = $!;
-                           aio_unlink $dst, sub {
+                           aioreq_pri $pri;
+                           add $grp aio_unlink $dst, sub {
                               $! = $errno;
-                              $cb->(-1);
+                              $grp->result (-1);
                            };
                         }
                      };
                   } else {
-                     $cb->(-1);
+                     $grp->result (-1);
                   }
                },
 
             } else {
-               $cb->(-1);
+               $grp->result (-1);
             }
          };
       } else {
-         $cb->($_[0]);
+         $grp->result ($_[0]);
       }
    };
+
+   $grp
 }
 
 =item aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
@@ -328,14 +437,15 @@ with the filenames.
 
 =item aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
 
-Scans a directory (similar to C<aio_readdir>) and tries to separate the
-entries of directory C<$path> into two sets of names, ones you can recurse
-into (directories), and ones you cannot recurse into (everything else).
+Scans a directory (similar to C<aio_readdir>) but additionally tries to
+efficiently separate the entries of directory C<$path> into two sets of
+names, directories you can recurse into (directories), and ones you cannot
+recurse into (everything else, including symlinks to directories).
 
-C<aio_scandir> is a composite request that consists of many
-aio-primitives. C<$maxreq> specifies the maximum number of outstanding
-aio requests that this function generates. If it is C<< <= 0 >>, then a
-suitable default will be chosen (currently 8).
+C<aio_scandir> is a composite request that creates of many sub requests_
+C<$maxreq> specifies the maximum number of outstanding aio requests that
+this function generates. If it is C<< <= 0 >>, then a suitable default
+will be chosen (currently 6).
 
 On error, the callback is called without arguments, otherwise it receives
 two array-refs with path-relative entry names.
@@ -353,53 +463,69 @@ Implementation notes.
 The C<aio_readdir> cannot be avoided, but C<stat()>'ing every entry can.
 
 After reading the directory, the modification time, size etc. of the
-directory before and after the readdir is checked, and if they match, the
-link count will be used to decide how many entries are directories (if
->= 2). Otherwise, no knowledge of the number of subdirectories will be
-assumed.
+directory before and after the readdir is checked, and if they match (and
+isn't the current time), the link count will be used to decide how many
+entries are directories (if >= 2). Otherwise, no knowledge of the number
+of subdirectories will be assumed.
 
-Then entires will be sorted into likely directories (everything without a
-non-initial dot) and likely non-directories (everything else).  Then every
-entry + C</.> will be C<stat>'ed, likely directories first. This is often
-faster because filesystems might detect the type of the entry without
-reading the inode data (e.g. ext2fs filetype feature). If that succeeds,
-it assumes that the entry is a directory or a symlink to directory (which
-will be checked seperately).
+Then entries will be sorted into likely directories (everything without
+a non-initial dot currently) and likely non-directories (everything
+else). Then every entry plus an appended C</.> will be C<stat>'ed,
+likely directories first. If that succeeds, it assumes that the entry
+is a directory or a symlink to directory (which will be checked
+seperately). This is often faster than stat'ing the entry itself because
+filesystems might detect the type of the entry without reading the inode
+data (e.g. ext2fs filetype feature).
 
-If the known number of directories has been reached, the rest of the
-entries is assumed to be non-directories.
+If the known number of directories (link count - 2) has been reached, the
+rest of the entries is assumed to be non-directories.
+
+This only works with certainty on POSIX (= UNIX) filesystems, which
+fortunately are the vast majority of filesystems around.
+
+It will also likely work on non-POSIX filesystems with reduced efficiency
+as those tend to return 0 or 1 as link counts, which disables the
+directory counting heuristic.
 
 =cut
 
 sub aio_scandir($$$) {
    my ($path, $maxreq, $cb) = @_;
 
-   $maxreq = 8 if $maxreq <= 0;
+   my $pri = aioreq_pri;
+
+   my $grp = aio_group $cb;
+
+   $maxreq = 6 if $maxreq <= 0;
 
    # stat once
-   aio_stat $path, sub {
-      return $cb->() if $_[0];
+   aioreq_pri $pri;
+   add $grp aio_stat $path, sub {
+      return $grp->result () if $_[0];
+      my $now = time;
       my $hash1 = join ":", (stat _)[0,1,3,7,9];
 
       # read the directory entries
-      aio_readdir $path, sub {
+      aioreq_pri $pri;
+      add $grp aio_readdir $path, sub {
          my $entries = shift
-            or return $cb->();
+            or return $grp->result ();
 
          # stat the dir another time
-         aio_stat $path, sub {
+         aioreq_pri $pri;
+         add $grp aio_stat $path, sub {
             my $hash2 = join ":", (stat _)[0,1,3,7,9];
 
             my $ndirs;
 
             # take the slow route if anything looks fishy
-            if ($hash1 ne $hash2) {
+            if ($hash1 ne $hash2 or (stat _)[9] == $now) {
                $ndirs = -1;
             } else {
                # if nlink == 2, we are finished
                # on non-posix-fs's, we rely on nlink < 2
                $ndirs = (stat _)[3] - 2
-                  or return $cb->([], $entries);
+                  or return $grp->result ([], $entries);
             }
 
             # sort into likely dirs and likely nondirs
@@ -411,56 +537,42 @@ sub aio_scandir($$$) {
 
             my (@dirs, @nondirs);
 
-            my ($statcb, $schedcb);
-            my $nreq = 0;
-
-            $schedcb = sub {
-               if (@$entries) {
-                  if ($nreq < $maxreq) {
-                     my $ent = pop @$entries;
-                     $nreq++;
-                     aio_stat "$path/$ent/.", sub { $statcb->($_[0], $ent) };
-                  }
-               } elsif (!$nreq) {
-                  # finished
-                  undef $statcb;
-                  undef $schedcb;
-                  $cb->(\@dirs, \@nondirs) if $cb;
-                  undef $cb;
-               }
+            my $statgrp = add $grp aio_group sub {
+               $grp->result (\@dirs, \@nondirs);
             };
-            $statcb = sub {
-               my ($status, $entry) = @_;
 
-               if ($status < 0) {
-                  $nreq--;
-                  push @nondirs, $entry;
-                  &$schedcb;
-               } else {
-                  # need to check for real directory
-                  aio_lstat "$path/$entry", sub {
-                     $nreq--;
+            limit $statgrp $maxreq;
+            feed $statgrp sub {
+               return unless @$entries;
+               my $entry = pop @$entries;
 
-                     if (-d _) {
-                        push @dirs, $entry;
+               aioreq_pri $pri;
+               add $statgrp aio_stat "$path/$entry/.", sub {
+                  if ($_[0] < 0) {
+                     push @nondirs, $entry;
+                  } else {
+                     # need to check for real directory
+                     aioreq_pri $pri;
+                     add $statgrp aio_lstat "$path/$entry", sub {
+                        if (-d _) {
+                           push @dirs, $entry;
 
-                        if (!--$ndirs) {
-                           push @nondirs, @$entries;
-                           $entries = [];
+                           unless (--$ndirs) {
+                              push @nondirs, @$entries;
+                              feed $statgrp;
+                           }
+                        } else {
+                           push @nondirs, $entry;
                         }
-                     } else {
-                        push @nondirs, $entry;
                      }
-
-                     &$schedcb;
                   }
-               }
+               };
             };
-
-            &$schedcb while @$entries && $nreq < $maxreq;
          };
       };
    };
+
+   $grp
 }
 
 =item aio_fsync $fh, $callback->($status)
@@ -475,6 +587,210 @@ callback with the fdatasync result code.
 
 If this call isn't available because your OS lacks it or it couldn't be
 detected, it will be emulated by calling C<fsync> instead.
+
+=item aio_group $callback->(...)
+
+This is a very special aio request: Instead of doing something, it is a
+container for other aio requests, which is useful if you want to bundle
+many requests into a single, composite, request with a definite callback
+and the ability to cancel the whole request with its subrequests.
+
+Returns an object of class L<IO::AIO::GRP>. See its documentation below
+for more info.
+
+Example:
+
+   my $grp = aio_group sub {
+      print "all stats done\n";
+   };
+
+   add $grp
+      (aio_stat ...),
+      (aio_stat ...),
+      ...;
+
+=item aio_nop $callback->()
+
+This is a special request - it does nothing in itself and is only used for
+side effects, such as when you want to add a dummy request to a group so
+that finishing the requests in the group depends on executing the given
+code.
+
+While this request does nothing, it still goes through the execution
+phase and still requires a worker thread. Thus, the callback will not
+be executed immediately but only after other requests in the queue have
+entered their execution phase. This can be used to measure request
+latency.
+
+=item IO::AIO::aio_busy $fractional_seconds, $callback->()  *NOT EXPORTED*
+
+Mainly used for debugging and benchmarking, this aio request puts one of
+the request workers to sleep for the given time.
+
+While it is theoretically handy to have simple I/O scheduling requests
+like sleep and file handle readable/writable, the overhead this creates is
+immense (it blocks a thread for a long time) so do not use this function
+except to put your application under artificial I/O pressure.
+
+=back
+
+=head2 IO::AIO::REQ CLASS
+
+All non-aggregate C<aio_*> functions return an object of this class when
+called in non-void context.
+
+=over 4
+
+=item cancel $req
+
+Cancels the request, if possible. Has the effect of skipping execution
+when entering the B<execute> state and skipping calling the callback when
+entering the the B<result> state, but will leave the request otherwise
+untouched. That means that requests that currently execute will not be
+stopped and resources held by the request will not be freed prematurely.
+
+=item cb $req $callback->(...)
+
+Replace (or simply set) the callback registered to the request.
+
+=back
+
+=head2 IO::AIO::GRP CLASS
+
+This class is a subclass of L<IO::AIO::REQ>, so all its methods apply to
+objects of this class, too.
+
+A IO::AIO::GRP object is a special request that can contain multiple other
+aio requests.
+
+You create one by calling the C<aio_group> constructing function with a
+callback that will be called when all contained requests have entered the
+C<done> state:
+
+   my $grp = aio_group sub {
+      print "all requests are done\n";
+   };
+
+You add requests by calling the C<add> method with one or more
+C<IO::AIO::REQ> objects:
+
+   $grp->add (aio_unlink "...");
+
+   add $grp aio_stat "...", sub {
+      $_[0] or return $grp->result ("error");
+
+      # add another request dynamically, if first succeeded
+      add $grp aio_open "...", sub {
+         $grp->result ("ok");
+      };
+   };
+
+This makes it very easy to create composite requests (see the source of
+C<aio_move> for an application) that work and feel like simple requests.
+
+=over 4
+
+=item * The IO::AIO::GRP objects will be cleaned up during calls to
+C<IO::AIO::poll_cb>, just like any other request.
+
+=item * They can be canceled like any other request. Canceling will cancel not
+only the request itself, but also all requests it contains.
+
+=item * They can also can also be added to other IO::AIO::GRP objects.
+
+=item * You must not add requests to a group from within the group callback (or
+any later time).
+
+=back
+
+Their lifetime, simplified, looks like this: when they are empty, they
+will finish very quickly. If they contain only requests that are in the
+C<done> state, they will also finish. Otherwise they will continue to
+exist.
+
+That means after creating a group you have some time to add requests. And
+in the callbacks of those requests, you can add further requests to the
+group. And only when all those requests have finished will the the group
+itself finish.
+
+=over 4
+
+=item add $grp ...
+
+=item $grp->add (...)
+
+Add one or more requests to the group. Any type of L<IO::AIO::REQ> can
+be added, including other groups, as long as you do not create circular
+dependencies.
+
+Returns all its arguments.
+
+=item $grp->cancel_subs
+
+Cancel all subrequests and clears any feeder, but not the group request
+itself. Useful when you queued a lot of events but got a result early.
+
+=item $grp->result (...)
+
+Set the result value(s) that will be passed to the group callback when all
+subrequests have finished and set thre groups errno to the current value
+of errno (just like calling C<errno> without an error number). By default,
+no argument will be passed and errno is zero.
+
+=item $grp->errno ([$errno])
+
+Sets the group errno value to C<$errno>, or the current value of errno
+when the argument is missing.
+
+Every aio request has an associated errno value that is restored when
+the callback is invoked. This method lets you change this value from its
+default (0).
+
+Calling C<result> will also set errno, so make sure you either set C<$!>
+before the call to C<result>, or call c<errno> after it.
+
+=item feed $grp $callback->($grp)
+
+Sets a feeder/generator on this group: every group can have an attached
+generator that generates requests if idle. The idea behind this is that,
+although you could just queue as many requests as you want in a group,
+this might starve other requests for a potentially long time.  For
+example, C<aio_scandir> might generate hundreds of thousands C<aio_stat>
+requests, delaying any later requests for a long time.
+
+To avoid this, and allow incremental generation of requests, you can
+instead a group and set a feeder on it that generates those requests. The
+feed callback will be called whenever there are few enough (see C<limit>,
+below) requests active in the group itself and is expected to queue more
+requests.
+
+The feed callback can queue as many requests as it likes (i.e. C<add> does
+not impose any limits).
+
+If the feed does not queue more requests when called, it will be
+automatically removed from the group.
+
+If the feed limit is C<0>, it will be set to C<2> automatically.
+
+Example:
+
+   # stat all files in @files, but only ever use four aio requests concurrently:
+
+   my $grp = aio_group sub { print "finished\n" };
+   limit $grp 4;
+   feed $grp sub {
+      my $file = pop @files
+         or return;
+
+      add $grp aio_stat $file, sub { ... };
+   };
+
+=item limit $grp $num
+
+Sets the feeder limit for the group: The feeder will be called whenever
+the group contains less than this many requests.
+
+Setting the limit to C<0> will pause the feeding process.
 
 =back
 
@@ -497,12 +813,31 @@ Process all outstanding events on the result pipe. You have to call this
 regularly. Returns the number of events processed. Returns immediately
 when no events are outstanding.
 
+If not all requests were processed for whatever reason, the filehandle
+will still be ready when C<poll_cb> returns.
+
 Example: Install an Event watcher that automatically calls
 IO::AIO::poll_cb with high priority:
 
    Event->io (fd => IO::AIO::poll_fileno,
               poll => 'r', async => 1,
               cb => \&IO::AIO::poll_cb);
+
+=item IO::AIO::poll_some $max_requests
+
+Similar to C<poll_cb>, but only processes up to C<$max_requests> requests
+at a time.
+
+Useful if you want to ensure some level of interactiveness when perl is
+not fast enough to process all requests in time.
+
+Example: Install an Event watcher that automatically calls
+IO::AIO::poll_some with low priority, to ensure that other parts of the
+program get the CPU sometimes even under high AIO load.
+
+   Event->io (fd => IO::AIO::poll_fileno,
+              poll => 'r', nice => 1,
+              cb => sub { IO::AIO::poll_some 256 });
 
 =item IO::AIO::poll_wait
 
@@ -514,13 +849,23 @@ See C<nreqs> for an example.
 
 =item IO::AIO::nreqs
 
-Returns the number of requests currently outstanding (i.e. for which their
-callback has not been invoked yet).
+Returns the number of requests currently in the ready, execute or pending
+states (i.e. for which their callback has not been invoked yet).
 
 Example: wait till there are no outstanding requests anymore:
 
    IO::AIO::poll_wait, IO::AIO::poll_cb
       while IO::AIO::nreqs;
+
+=item IO::AIO::nready
+
+Returns the number of requests currently in the ready state (not yet
+executed).
+
+=item IO::AIO::npending
+
+Returns the number of requests currently in the pending state (executed,
+but not yet processed by poll_cb).
 
 =item IO::AIO::flush
 
@@ -542,17 +887,18 @@ Strictly equivalent to:
 
 =item IO::AIO::min_parallel $nthreads
 
-Set the minimum number of AIO threads to C<$nthreads>. The current default
-is C<4>, which means four asynchronous operations can be done at one time
-(the number of outstanding operations, however, is unlimited).
+Set the minimum number of AIO threads to C<$nthreads>. The current
+default is C<8>, which means eight asynchronous operations can execute
+concurrently at any one time (the number of outstanding requests,
+however, is unlimited).
 
 IO::AIO starts threads only on demand, when an AIO request is queued and
 no free thread exists.
 
-It is recommended to keep the number of threads low, as some Linux
-kernel versions will scale negatively with the number of threads (higher
-parallelity => MUCH higher latency). With current Linux 2.6 versions, 4-32
-threads should be fine.
+It is recommended to keep the number of threads relatively low, as some
+Linux kernel versions will scale negatively with the number of threads
+(higher parallelity => MUCH higher latency). With current Linux 2.6
+versions, 4-32 threads should be fine.
 
 Under most circumstances you don't need to call this function, as the
 module selects a default that is suitable for low to moderate load.
@@ -571,17 +917,23 @@ that all threads are killed and that there are no outstanding requests.
 
 Under normal circumstances you don't need to call this function.
 
-=item $oldnreqs = IO::AIO::max_outstanding $nreqs
+=item $oldmaxreqs = IO::AIO::max_outstanding $maxreqs
+
+This is a very bad function to use in interactive programs because it
+blocks, and a bad way to reduce concurrency because it is inexact: Better
+use an C<aio_group> together with a feed callback.
 
 Sets the maximum number of outstanding requests to C<$nreqs>. If you
-try to queue up more than this number of requests, the caller will block until
-some requests have been handled.
+to queue up more than this number of requests, the next call to the
+C<poll_cb> (and C<poll_some> and other functions calling C<poll_cb>)
+function will block until the limit is no longer exceeded.
 
-The default is very large, so normally there is no practical limit. If you
-queue up many requests in a loop it often improves speed if you set
-this to a relatively low number, such as C<100>.
+The default value is very large, so there is no practical limit on the
+number of outstanding requests.
 
-Under normal circumstances you don't need to call this function.
+You can still queue as many requests as you want. Therefore,
+C<max_oustsanding> is mainly useful in simple scripts (with low values) or
+as a stop gap to shield against fatal memory overflow (with large values).
 
 =back
 
@@ -603,7 +955,7 @@ sub _fd2fh {
    *$sym
 }
 
-min_parallel 4;
+min_parallel 8;
 
 END {
    max_parallel 0;
@@ -613,17 +965,46 @@ END {
 
 =head2 FORK BEHAVIOUR
 
+This module should do "the right thing" when the process using it forks:
+
 Before the fork, IO::AIO enters a quiescent state where no requests
 can be added in other threads and no results will be processed. After
 the fork the parent simply leaves the quiescent state and continues
-request/result processing, while the child clears the request/result
-queue (so the requests started before the fork will only be handled in
-the parent). Threats will be started on demand until the limit ste in the
+request/result processing, while the child frees the request/result queue
+(so that the requests started before the fork will only be handled in the
+parent). Threads will be started on demand until the limit set in the
 parent process has been reached again.
+
+In short: the parent will, after a short pause, continue as if fork had
+not been called, while the child will act as if IO::AIO has not been used
+yet.
+
+=head2 MEMORY USAGE
+
+Per-request usage:
+
+Each aio request uses - depending on your architecture - around 100-200
+bytes of memory. In addition, stat requests need a stat buffer (possibly
+a few hundred bytes), readdir requires a result buffer and so on. Perl
+scalars and other data passed into aio requests will also be locked and
+will consume memory till the request has entered the done state.
+
+This is now awfully much, so queuing lots of requests is not usually a
+problem.
+
+Per-thread usage:
+
+In the execution phase, some aio requests require more memory for
+temporary buffers, and each thread requires a stack and other data
+structures (usually around 16k-128k, depending on the OS).
+
+=head1 KNOWN BUGS
+
+Known bugs will be fixed in the next release.
 
 =head1 SEE ALSO
 
-L<Coro>, L<Linux::AIO>.
+L<Coro::AIO>.
 
 =head1 AUTHOR
 
