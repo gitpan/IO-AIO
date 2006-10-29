@@ -45,6 +45,9 @@
 # endif
 #endif
 
+/* number of seconds after which idle threads exit */
+#define IDLE_TIMEOUT 10
+
 /* used for struct dirent, AIX doesn't provide it */
 #ifndef NAME_MAX
 # define NAME_MAX 4096
@@ -67,11 +70,11 @@
  * this is conservatice, likely most arches this runs
  * on have atomic word read/writes.
  */
-#ifndef WORDREAD_UNSAFE
+#ifndef WORDACCESS_UNSAFE
 # if __i386 || __x86_64
-#  define WORDREAD_UNSAFE 0
+#  define WORDACCESS_UNSAFE 0
 # else
-#  define WORDREAD_UNSAFE 1
+#  define WORDACCESS_UNSAFE 1
 # endif
 #endif
 
@@ -94,7 +97,7 @@ enum {
   REQ_STAT, REQ_LSTAT, REQ_FSTAT,
   REQ_FSYNC, REQ_FDATASYNC,
   REQ_UNLINK, REQ_RMDIR, REQ_RENAME,
-  REQ_READDIR,
+  REQ_MKNOD, REQ_READDIR,
   REQ_LINK, REQ_SYMLINK,
   REQ_GROUP, REQ_NOP,
   REQ_BUSY,
@@ -144,12 +147,21 @@ enum {
   NUM_PRI     = PRI_MAX + PRI_BIAS + 1,
 };
 
+#define AIO_TICKS ((1000000 + 1023) >> 10)
+
+static unsigned int max_poll_time = 0;
+static unsigned int max_poll_reqs = 0;
+
+/* calculcate time difference in ~1/AIO_TICKS of a second */
+static int tvdiff (struct timeval *tv1, struct timeval *tv2)
+{
+  return  (tv2->tv_sec  - tv1->tv_sec ) * AIO_TICKS
+       + ((tv2->tv_usec - tv1->tv_usec) >> 10);
+}
+
 static int next_pri = DEFAULT_PRI + PRI_BIAS;
 
-static unsigned int started, wanted;
-static volatile unsigned int nreqs, nready, npending;
-static volatile unsigned int max_outstanding = 0xffffffff;
-static int respipe [2];
+static unsigned int started, idle, wanted;
 
 #if __linux && defined (PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP)
 # define AIO_MUTEX_INIT PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
@@ -200,9 +212,57 @@ static void worker_free (worker *wrk)
   free (wrk);
 }
 
+static volatile unsigned int nreqs, nready, npending;
+static volatile unsigned int max_idle = 4;
+static volatile unsigned int max_outstanding = 0xffffffff;
+static int respipe [2];
+
 static pthread_mutex_t reslock = AIO_MUTEX_INIT;
 static pthread_mutex_t reqlock = AIO_MUTEX_INIT;
 static pthread_cond_t  reqwait = PTHREAD_COND_INITIALIZER;
+
+#if WORDACCESS_UNSAFE
+
+static unsigned int get_nready ()
+{
+  unsigned int retval;
+
+  LOCK   (reqlock);
+  retval = nready;
+  UNLOCK (reqlock);
+
+  return retval;
+}
+
+static unsigned int get_npending ()
+{
+  unsigned int retval;
+
+  LOCK   (reslock);
+  retval = npending;
+  UNLOCK (reslock);
+
+  return retval;
+}
+
+static unsigned int get_nthreads ()
+{
+  unsigned int retval;
+
+  LOCK   (wrklock);
+  retval = started;
+  UNLOCK (wrklock);
+
+  return retval;
+}
+
+#else
+
+# define get_nready()   nready
+# define get_npending() npending
+# define get_nthreads() started
+
+#endif
 
 /*
  * a somewhat faster data structure might be nice, but
@@ -258,7 +318,7 @@ aio_req reqq_shift (reqq *q)
   abort ();
 }
 
-static int poll_cb (int max);
+static int poll_cb ();
 static void req_invoke (aio_req req);
 static void req_free (aio_req req);
 static void req_cancel (aio_req req);
@@ -330,27 +390,6 @@ static void aio_grp_dec (aio_req grp)
     {
       req_invoke (grp);
       req_free (grp);
-    }
-}
-
-static void poll_wait ()
-{
-  fd_set rfd;
-
-  while (nreqs)
-    {
-      int size;
-      if (WORDREAD_UNSAFE) LOCK (reslock);
-      size = res_queue.size;
-      if (WORDREAD_UNSAFE) UNLOCK (reslock);
-
-      if (size)
-        return;
-
-      FD_ZERO(&rfd);
-      FD_SET(respipe [0], &rfd);
-
-      select (respipe [0] + 1, &rfd, 0, 0, 0);
     }
 }
 
@@ -506,17 +545,152 @@ static void req_cancel (aio_req req)
   req_cancel_subs (req);
 }
 
-static int poll_cb (int max)
+static void *aio_proc(void *arg);
+
+static void start_thread (void)
+{
+  sigset_t fullsigset, oldsigset;
+  pthread_attr_t attr;
+
+  worker *wrk = calloc (1, sizeof (worker));
+
+  if (!wrk)
+    croak ("unable to allocate worker thread data");
+
+  pthread_attr_init (&attr);
+  pthread_attr_setstacksize (&attr, STACKSIZE);
+  pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_DETACHED);
+#ifdef PTHREAD_SCOPE_PROCESS
+  pthread_attr_setscope (&attr, PTHREAD_SCOPE_PROCESS);
+#endif
+
+  sigfillset (&fullsigset);
+
+  LOCK (wrklock);
+  sigprocmask (SIG_SETMASK, &fullsigset, &oldsigset);
+
+  if (pthread_create (&wrk->tid, &attr, aio_proc, (void *)wrk) == 0)
+    {
+      wrk->prev = &wrk_first;
+      wrk->next = wrk_first.next;
+      wrk_first.next->prev = wrk;
+      wrk_first.next = wrk;
+      ++started;
+    }
+  else
+    free (wrk);
+
+  sigprocmask (SIG_SETMASK, &oldsigset, 0);
+  UNLOCK (wrklock);
+}
+
+static void maybe_start_thread ()
+{
+  if (get_nthreads () >= wanted)
+    return;
+  
+  /* todo: maybe use idle here, but might be less exact */
+  if (0 <= (int)get_nthreads () + (int)get_npending () - (int)nreqs)
+    return;
+
+  start_thread ();
+}
+
+static void req_send (aio_req req)
+{
+  ++nreqs;
+
+  LOCK (reqlock);
+  ++nready;
+  reqq_push (&req_queue, req);
+  pthread_cond_signal (&reqwait);
+  UNLOCK (reqlock);
+
+  maybe_start_thread ();
+}
+
+static void end_thread (void)
+{
+  aio_req req;
+
+  Newz (0, req, 1, aio_cb);
+
+  req->type = REQ_QUIT;
+  req->pri  = PRI_MAX + PRI_BIAS;
+
+  LOCK (reqlock);
+  reqq_push (&req_queue, req);
+  pthread_cond_signal (&reqwait);
+  UNLOCK (reqlock);
+
+  LOCK (wrklock);
+  --started;
+  UNLOCK (wrklock);
+}
+
+static void set_max_idle (int nthreads)
+{
+  if (WORDACCESS_UNSAFE) LOCK   (reqlock);
+  max_idle = nthreads <= 0 ? 1 : nthreads;
+  if (WORDACCESS_UNSAFE) UNLOCK (reqlock);
+}
+
+static void min_parallel (int nthreads)
+{
+  if (wanted < nthreads)
+    wanted = nthreads;
+}
+
+static void max_parallel (int nthreads)
+{
+  if (wanted > nthreads)
+    wanted = nthreads;
+
+  while (started > wanted)
+    end_thread ();
+}
+
+static void poll_wait ()
+{
+  fd_set rfd;
+
+  while (nreqs)
+    {
+      int size;
+      if (WORDACCESS_UNSAFE) LOCK   (reslock);
+      size = res_queue.size;
+      if (WORDACCESS_UNSAFE) UNLOCK (reslock);
+
+      if (size)
+        return;
+
+      maybe_start_thread ();
+
+      FD_ZERO(&rfd);
+      FD_SET(respipe [0], &rfd);
+
+      select (respipe [0] + 1, &rfd, 0, 0, 0);
+    }
+}
+
+static int poll_cb ()
 {
   dSP;
   int count = 0;
+  int maxreqs = max_poll_reqs;
   int do_croak = 0;
+  struct timeval tv_start, tv_now;
   aio_req req;
+
+  if (max_poll_time)
+    gettimeofday (&tv_start, 0);
 
   for (;;)
     {
-      while (max <= 0 || count < max)
+      for (;;)
         {
+          maybe_start_thread ();
+
           LOCK (reslock);
           req = reqq_shift (&res_queue);
 
@@ -540,9 +714,7 @@ static int poll_cb (int max)
 
           --nreqs;
 
-          if (req->type == REQ_QUIT)
-            --started;
-          else if (req->type == REQ_GROUP && req->length)
+          if (req->type == REQ_GROUP && req->length)
             {
               req->fd = 1; /* mark request as delayed */
               continue;
@@ -568,6 +740,17 @@ static int poll_cb (int max)
             }
 
           req_free (req);
+
+          if (maxreqs && !--maxreqs)
+            break;
+
+          if (max_poll_time)
+            {
+              gettimeofday (&tv_now, 0);
+
+              if (tvdiff (&tv_start, &tv_now) >= max_poll_time)
+                break;
+            }
         }
 
       if (nreqs <= max_outstanding)
@@ -575,98 +758,10 @@ static int poll_cb (int max)
 
       poll_wait ();
 
-      max = 0;
+      ++maxreqs;
     }
 
   return count;
-}
-
-static void *aio_proc(void *arg);
-
-static void start_thread (void)
-{
-  sigset_t fullsigset, oldsigset;
-  pthread_attr_t attr;
-
-  worker *wrk = calloc (1, sizeof (worker));
-
-  if (!wrk)
-    croak ("unable to allocate worker thread data");
-
-  pthread_attr_init (&attr);
-  pthread_attr_setstacksize (&attr, STACKSIZE);
-  pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_DETACHED);
-
-  sigfillset (&fullsigset);
-
-  LOCK (wrklock);
-  sigprocmask (SIG_SETMASK, &fullsigset, &oldsigset);
-
-  if (pthread_create (&wrk->tid, &attr, aio_proc, (void *)wrk) == 0)
-    {
-      wrk->prev = &wrk_first;
-      wrk->next = wrk_first.next;
-      wrk_first.next->prev = wrk;
-      wrk_first.next = wrk;
-      ++started;
-    }
-  else
-    free (wrk);
-
-  sigprocmask (SIG_SETMASK, &oldsigset, 0);
-  UNLOCK (wrklock);
-}
-
-static void req_send (aio_req req)
-{
-  while (started < wanted && nreqs >= started)
-    start_thread ();
-
-  ++nreqs;
-
-  LOCK (reqlock);
-  ++nready;
-  reqq_push (&req_queue, req);
-  pthread_cond_signal (&reqwait);
-  UNLOCK (reqlock);
-}
-
-static void end_thread (void)
-{
-  aio_req req;
-
-  Newz (0, req, 1, aio_cb);
-
-  req->type = REQ_QUIT;
-  req->pri  = PRI_MAX + PRI_BIAS;
-
-  req_send (req);
-}
-
-static void min_parallel (int nthreads)
-{
-  if (wanted < nthreads)
-    wanted = nthreads;
-}
-
-static void max_parallel (int nthreads)
-{
-  int cur = started;
-
-  if (wanted > nthreads)
-    wanted = nthreads;
-
-  while (cur > wanted)
-    {
-      end_thread ();
-      cur--;
-    }
-
-  while (started > wanted)
-    {
-      poll_wait ();
-      poll_cb (0);
-    }
 }
 
 static void create_pipe ()
@@ -940,11 +1035,17 @@ static void scandir_ (aio_req req, worker *self)
 static void *aio_proc (void *thr_arg)
 {
   aio_req req;
-  int type;
+  struct timespec ts;
   worker *self = (worker *)thr_arg;
 
-  do
+  /* try to distribute timeouts somewhat evenly */
+  ts.tv_nsec = (((unsigned long)self + (unsigned long)ts.tv_sec) & 1023UL)
+               * (1000000000UL / 1024UL);
+
+  for (;;)
     {
+      ts.tv_sec  = time (0) + IDLE_TIMEOUT;
+
       LOCK (reqlock);
 
       for (;;)
@@ -954,7 +1055,27 @@ static void *aio_proc (void *thr_arg)
           if (req)
             break;
 
-          pthread_cond_wait (&reqwait, &reqlock);
+          ++idle;
+
+          if (pthread_cond_timedwait (&reqwait, &reqlock, &ts)
+              == ETIMEDOUT)
+            {
+              if (idle > max_idle)
+                {
+                  --idle;
+                  UNLOCK (reqlock);
+                  LOCK (wrklock);
+                  --started;
+                  UNLOCK (wrklock);
+                  goto quit;
+                }
+
+              /* we are allowed to idle, so do so without any timeout */
+              pthread_cond_wait (&reqwait, &reqlock);
+              ts.tv_sec  = time (0) + IDLE_TIMEOUT;
+            }
+
+          --idle;
         }
 
       --nready;
@@ -962,10 +1083,9 @@ static void *aio_proc (void *thr_arg)
       UNLOCK (reqlock);
      
       errno = 0; /* strictly unnecessary */
-      type = req->type; /* remember type for QUIT check */
 
       if (!(req->flags & FLAG_CANCELLED))
-        switch (type)
+        switch (req->type)
           {
             case REQ_READ:      req->result = pread     (req->fd, req->dataptr, req->length, req->offset); break;
             case REQ_WRITE:     req->result = pwrite    (req->fd, req->dataptr, req->length, req->offset); break;
@@ -984,6 +1104,7 @@ static void *aio_proc (void *thr_arg)
             case REQ_RENAME:    req->result = rename    (req->data2ptr, req->dataptr); break;
             case REQ_LINK:      req->result = link      (req->data2ptr, req->dataptr); break;
             case REQ_SYMLINK:   req->result = symlink   (req->data2ptr, req->dataptr); break;
+            case REQ_MKNOD:     req->result = mknod     (req->data2ptr, req->mode, (dev_t)req->offset); break;
 
             case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
             case REQ_FSYNC:     req->result = fsync     (req->fd); break;
@@ -1001,8 +1122,10 @@ static void *aio_proc (void *thr_arg)
 
             case REQ_GROUP:
             case REQ_NOP:
-            case REQ_QUIT:
               break;
+
+            case REQ_QUIT:
+              goto quit;
 
             default:
               req->result = ENOSYS;
@@ -1024,8 +1147,8 @@ static void *aio_proc (void *thr_arg)
 
       UNLOCK (reslock);
     }
-  while (type != REQ_QUIT);
 
+quit:
   LOCK (wrklock);
   worker_free (self);
   UNLOCK (wrklock);
@@ -1082,8 +1205,11 @@ static void atfork_child (void)
       worker_free (wrk);
     }
 
-  started = 0;
-  nreqs = 0;
+  started  = 0;
+  idle     = 0;
+  nreqs    = 0;
+  nready   = 0;
+  npending = 0;
 
   close (respipe [0]);
   close (respipe [1]);
@@ -1120,13 +1246,29 @@ PROTOTYPES: ENABLE
 BOOT:
 {
 	HV *stash = gv_stashpv ("IO::AIO", 1);
+
         newCONSTSUB (stash, "EXDEV",    newSViv (EXDEV));
         newCONSTSUB (stash, "O_RDONLY", newSViv (O_RDONLY));
         newCONSTSUB (stash, "O_WRONLY", newSViv (O_WRONLY));
+        newCONSTSUB (stash, "O_CREAT",  newSViv (O_CREAT));
+        newCONSTSUB (stash, "O_TRUNC",  newSViv (O_TRUNC));
+        newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
 
 	create_pipe ();
         pthread_atfork (atfork_prepare, atfork_parent, atfork_child);
 }
+
+void
+max_poll_reqs (int nreqs)
+	PROTOTYPE: $
+        CODE:
+        max_poll_reqs = nreqs;
+
+void
+max_poll_time (double nseconds)
+	PROTOTYPE: $
+        CODE:
+        max_poll_time = nseconds * AIO_TICKS;
 
 void
 min_parallel (int nthreads)
@@ -1135,6 +1277,12 @@ min_parallel (int nthreads)
 void
 max_parallel (int nthreads)
 	PROTOTYPE: $
+
+void
+max_idle (int nthreads)
+	PROTOTYPE: $
+        CODE:
+        set_max_idle (nthreads);
 
 int
 max_outstanding (int maxreqs)
@@ -1368,6 +1516,25 @@ aio_link (oldpath,newpath,callback=&PL_sv_undef)
 }
 
 void
+aio_mknod (pathname,mode,dev,callback=&PL_sv_undef)
+	SV * pathname
+	SV * callback
+        UV mode
+        UV dev
+	PPCODE:
+{
+	dREQ;
+	
+        req->type = REQ_MKNOD;
+	req->data = newSVsv (pathname);
+	req->dataptr = SvPVbyte_nolen (req->data);
+        req->mode = (mode_t)mode;
+        req->offset = dev;
+	
+	REQ_SEND;
+}
+
+void
 aio_busy (delay,callback=&PL_sv_undef)
 	double delay
 	SV * callback
@@ -1462,15 +1629,7 @@ int
 poll_cb(...)
 	PROTOTYPE:
 	CODE:
-        RETVAL = poll_cb (0);
-	OUTPUT:
-	RETVAL
-
-int
-poll_some(int max = 0)
-	PROTOTYPE: $
-	CODE:
-        RETVAL = poll_cb (max);
+        RETVAL = poll_cb ();
 	OUTPUT:
 	RETVAL
 
@@ -1493,9 +1652,7 @@ int
 nready()
 	PROTOTYPE:
 	CODE:
-        if (WORDREAD_UNSAFE) LOCK   (reqlock);
-        RETVAL = nready;
-        if (WORDREAD_UNSAFE) UNLOCK (reqlock);
+        RETVAL = get_nready ();
 	OUTPUT:
 	RETVAL
 
@@ -1503,9 +1660,17 @@ int
 npending()
 	PROTOTYPE:
 	CODE:
-        if (WORDREAD_UNSAFE) LOCK   (reslock);
-        RETVAL = npending;
-        if (WORDREAD_UNSAFE) UNLOCK (reslock);
+        RETVAL = get_npending ();
+	OUTPUT:
+	RETVAL
+
+int
+nthreads()
+	PROTOTYPE:
+	CODE:
+        if (WORDACCESS_UNSAFE) LOCK   (wrklock);
+        RETVAL = started;
+        if (WORDACCESS_UNSAFE) UNLOCK (wrklock);
 	OUTPUT:
 	RETVAL
 

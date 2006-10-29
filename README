@@ -50,12 +50,28 @@ DESCRIPTION
     This module implements asynchronous I/O using whatever means your
     operating system supports.
 
+    Asynchronous means that operations that can normally block your program
+    (e.g. reading from disk) will be done asynchronously: the operation will
+    still block, but you can do something else in the meantime. This is
+    extremely useful for programs that need to stay interactive even when
+    doing heavy I/O (GUI programs, high performance network servers etc.),
+    but can also be used to easily do operations in parallel that are
+    normally done sequentially, e.g. stat'ing many files, which is much
+    faster on a RAID volume or over NFS when you do a number of stat
+    operations concurrently.
+
+    While this works on all types of file descriptors (for example sockets),
+    using these functions on file descriptors that support nonblocking
+    operation (again, sockets, pipes etc.) is very inefficient. Use an event
+    loop for that (such as the Event module): IO::AIO will naturally fit
+    into such an event loop itself.
+
     In this version, a number of threads are started that execute your
     requests and signal their completion. You don't need thread support in
     perl, and the threads created by this module will not be visible to
     perl. In the future, this module might make use of the native aio
     functions available on many operating systems. However, they are often
-    not well-supported or restricted (Linux doesn't allow them on normal
+    not well-supported or restricted (GNU/Linux doesn't allow them on normal
     files currently, for example), and they would only support aio_read and
     aio_write, so the remaining functionality would have to be implemented
     using threads anyway.
@@ -64,6 +80,49 @@ DESCRIPTION
     threads, it is currently not reentrant in any way, so use appropriate
     locking yourself, always call "poll_cb" from within the same thread, or
     never call "poll_cb" (or other "aio_" functions) recursively.
+
+  EXAMPLE
+    This is a simple example that uses the Event module and loads
+    /etc/passwd asynchronously:
+
+       use Fcntl;
+       use Event;
+       use IO::AIO;
+
+       # register the IO::AIO callback with Event
+       Event->io (fd => IO::AIO::poll_fileno,
+                  poll => 'r',
+                  cb => \&IO::AIO::poll_cb);
+
+       # queue the request to open /etc/passwd
+       aio_open "/etc/passwd", O_RDONLY, 0, sub {
+          my $fh = $_[0]
+             or die "error while opening: $!";
+
+          # stat'ing filehandles is generally non-blocking
+          my $size = -s $fh;
+
+          # queue a request to read the file
+          my $contents;
+          aio_read $fh, 0, $size, $contents, 0, sub {
+             $_[0] == $size
+                or die "short read: $!";
+
+             close $fh;
+
+             # file contents now in $contents
+             print $contents;
+
+             # exit event loop and program
+             Event::unloop;
+          };
+       };
+
+       # possibly queue up other requests, or open GUI windows,
+       # check for sockets etc. etc.
+
+       # process events as long as there are some:
+       Event::loop;
 
 REQUEST ANATOMY AND LIFETIME
     Every "aio_*" function creates a request. which is a C data structure
@@ -109,7 +168,7 @@ REQUEST ANATOMY AND LIFETIME
         either do nothing or result in a runtime error).
 
 FUNCTIONS
-  AIO FUNCTIONS
+  AIO REQUEST FUNCTIONS
         All the "aio_*" calls are more or less thin wrappers around the
         syscall with the same name (sans "aio_"). The arguments are similar
         or identical, and they all accept an additional (and optional)
@@ -122,21 +181,26 @@ FUNCTIONS
         All functions expecting a filehandle keep a copy of the filehandle
         internally until the request has finished.
 
-        All requests return objects of type IO::AIO::REQ that allow further
-        manipulation of those requests while they are in-flight.
+        All functions return request objects of type IO::AIO::REQ that allow
+        further manipulation of those requests while they are in-flight.
 
         The pathnames you pass to these routines *must* be absolute and
-        encoded in byte form. The reason for the former is that at the time
-        the request is being executed, the current working directory could
-        have changed. Alternatively, you can make sure that you never change
-        the current working directory.
+        encoded as octets. The reason for the former is that at the time the
+        request is being executed, the current working directory could have
+        changed. Alternatively, you can make sure that you never change the
+        current working directory anywhere in the program and then use
+        relative paths.
 
-        To encode pathnames to byte form, either make sure you either: a)
+        To encode pathnames as octets, either make sure you either: a)
         always pass in filenames you got from outside (command line, readdir
-        etc.), b) are ASCII or ISO 8859-1, c) use the Encode module and
-        encode your pathnames to the locale (or other) encoding in effect in
-        the user environment, d) use Glib::filename_from_unicode on unicode
-        filenames or e) use something else.
+        etc.) without tinkering, b) are ASCII or ISO 8859-1, c) use the
+        Encode module and encode your pathnames to the locale (or other)
+        encoding in effect in the user environment, d) use
+        Glib::filename_from_unicode on unicode filenames or e) use something
+        else to ensure your scalar has the correct contents.
+
+        This works, btw. independent of the internal UTF-8 bit, which
+        IO::AIO handles correctly wether it is set or not.
 
         $prev_pri = aioreq_pri [$pri]
             Returns the priority value that would be used for the next
@@ -167,7 +231,7 @@ FUNCTIONS
 
         aioreq_nice $pri_adjust
             Similar to "aioreq_pri", but subtracts the given value from the
-            current priority, so effects are cumulative.
+            current priority, so the effect is cumulative.
 
         aio_open $pathname, $flags, $mode, $callback->($fh)
             Asynchronously open or create a file and call the callback with
@@ -226,22 +290,6 @@ FUNCTIONS
                   $_[0] > 0 or die "read error: $!";
                   print "read $_[0] bytes: <$buffer>\n";
                };
-
-        aio_move $srcpath, $dstpath, $callback->($status)
-            Try to move the *file* (directories not supported as either
-            source or destination) from $srcpath to $dstpath and call the
-            callback with the 0 (error) or -1 ok.
-
-            This is a composite request that tries to rename(2) the file
-            first. If rename files with "EXDEV", it creates the destination
-            file with mode 0200 and copies the contents of the source file
-            into it using "aio_sendfile", followed by restoring atime,
-            mtime, access mode and uid/gid, in that order, and unlinking the
-            $srcpath.
-
-            If an error occurs, the partial destination file will be
-            unlinked, if possible, except when setting atime, mtime, access
-            mode and uid/gid, where errors are being ignored.
 
         aio_sendfile $out_fh, $in_fh, $in_offset, $length,
         $callback->($retval)
@@ -308,6 +356,15 @@ FUNCTIONS
             Asynchronously unlink (delete) a file and call the callback with
             the result code.
 
+        aio_mknod $path, $mode, $dev, $callback->($status)
+            [EXPERIMENTAL]
+
+            Asynchronously create a device node (or fifo). See mknod(2).
+
+            The only (POSIX-) portable way of calling this function is:
+
+               aio_mknod $path, IO::AIO::S_IFIFO | $mode, 0, sub { ...
+
         aio_link $srcpath, $dstpath, $callback->($status)
             Asynchronously create a new link to the existing object at
             $srcpath at the path $dstpath and call the callback with the
@@ -335,6 +392,29 @@ FUNCTIONS
             The callback a single argument which is either "undef" or an
             array-ref with the filenames.
 
+        aio_copy $srcpath, $dstpath, $callback->($status)
+            Try to copy the *file* (directories not supported as either
+            source or destination) from $srcpath to $dstpath and call the
+            callback with the 0 (error) or -1 ok.
+
+            This is a composite request that it creates the destination file
+            with mode 0200 and copies the contents of the source file into
+            it using "aio_sendfile", followed by restoring atime, mtime,
+            access mode and uid/gid, in that order.
+
+            If an error occurs, the partial destination file will be
+            unlinked, if possible, except when setting atime, mtime, access
+            mode and uid/gid, where errors are being ignored.
+
+        aio_move $srcpath, $dstpath, $callback->($status)
+            Try to move the *file* (directories not supported as either
+            source or destination) from $srcpath to $dstpath and call the
+            callback with the 0 (error) or -1 ok.
+
+            This is a composite request that tries to rename(2) the file
+            first. If rename files with "EXDEV", it copies the file with
+            "aio_copy" and, if that is successful, unlinking the $srcpath.
+
         aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
             Scans a directory (similar to "aio_readdir") but additionally
             tries to efficiently separate the entries of directory $path
@@ -345,7 +425,7 @@ FUNCTIONS
             "aio_scandir" is a composite request that creates of many sub
             requests_ $maxreq specifies the maximum number of outstanding
             aio requests that this function generates. If it is "<= 0", then
-            a suitable default will be chosen (currently 6).
+            a suitable default will be chosen (currently 4).
 
             On error, the callback is called without arguments, otherwise it
             receives two array-refs with path-relative entry names.
@@ -586,6 +666,7 @@ FUNCTIONS
             Setting the limit to 0 will pause the feeding process.
 
   SUPPORT FUNCTIONS
+   EVENT PROCESSING AND EVENT LOOP INTEGRATION
         $fileno = IO::AIO::poll_fileno
             Return the *request result pipe file descriptor*. This
             filehandle must be polled for reading by some mechanism outside
@@ -596,9 +677,11 @@ FUNCTIONS
             See "poll_cb" for an example.
 
         IO::AIO::poll_cb
-            Process all outstanding events on the result pipe. You have to
+            Process some outstanding events on the result pipe. You have to
             call this regularly. Returns the number of events processed.
-            Returns immediately when no events are outstanding.
+            Returns immediately when no events are outstanding. The amount
+            of events processed depends on the settings of
+            "IO::AIO::max_poll_req" and "IO::AIO::max_poll_time".
 
             If not all requests were processed for whatever reason, the
             filehandle will still be ready when "poll_cb" returns.
@@ -610,20 +693,33 @@ FUNCTIONS
                           poll => 'r', async => 1,
                           cb => \&IO::AIO::poll_cb);
 
-        IO::AIO::poll_some $max_requests
-            Similar to "poll_cb", but only processes up to $max_requests
-            requests at a time.
+        IO::AIO::max_poll_reqs $nreqs
+        IO::AIO::max_poll_time $seconds
+            These set the maximum number of requests (default 0, meaning
+            infinity) that are being processed by "IO::AIO::poll_cb" in one
+            call, respectively the maximum amount of time (default 0,
+            meaning infinity) spent in "IO::AIO::poll_cb" to process
+            requests (more correctly the mininum amount of time "poll_cb" is
+            allowed to use).
 
-            Useful if you want to ensure some level of interactiveness when
-            perl is not fast enough to process all requests in time.
+            Setting these is useful if you want to ensure some level of
+            interactiveness when perl is not fast enough to process all
+            requests in time.
+
+            For interactive programs, values such as 0.01 to 0.1 should be
+            fine.
 
             Example: Install an Event watcher that automatically calls
             IO::AIO::poll_some with low priority, to ensure that other parts
             of the program get the CPU sometimes even under high AIO load.
 
+               # try not to spend much more than 0.1s in poll_cb
+               IO::AIO::max_poll_time 0.1;
+
+               # use a low priority so other tasks have priority
                Event->io (fd => IO::AIO::poll_fileno,
                           poll => 'r', nice => 1,
-                          cb => sub { IO::AIO::poll_some 256 });
+                          cb => &IO::AIO::poll_cb);
 
         IO::AIO::poll_wait
             Wait till the result filehandle becomes ready for reading
@@ -631,32 +727,6 @@ FUNCTIONS
             want to synchronously wait for some requests to finish).
 
             See "nreqs" for an example.
-
-        IO::AIO::nreqs
-            Returns the number of requests currently in the ready, execute
-            or pending states (i.e. for which their callback has not been
-            invoked yet).
-
-            Example: wait till there are no outstanding requests anymore:
-
-               IO::AIO::poll_wait, IO::AIO::poll_cb
-                  while IO::AIO::nreqs;
-
-        IO::AIO::nready
-            Returns the number of requests currently in the ready state (not
-            yet executed).
-
-        IO::AIO::npending
-            Returns the number of requests currently in the pending state
-            (executed, but not yet processed by poll_cb).
-
-        IO::AIO::flush
-            Wait till all outstanding AIO requests have been handled.
-
-            Strictly equivalent to:
-
-               IO::AIO::poll_wait, IO::AIO::poll_cb
-                  while IO::AIO::nreqs;
 
         IO::AIO::poll
             Waits until some requests have been handled.
@@ -666,6 +736,15 @@ FUNCTIONS
                IO::AIO::poll_wait, IO::AIO::poll_cb
                   if IO::AIO::nreqs;
 
+        IO::AIO::flush
+            Wait till all outstanding AIO requests have been handled.
+
+            Strictly equivalent to:
+
+               IO::AIO::poll_wait, IO::AIO::poll_cb
+                  while IO::AIO::nreqs;
+
+   CONTROLLING THE NUMBER OF THREADS
         IO::AIO::min_parallel $nthreads
             Set the minimum number of AIO threads to $nthreads. The current
             default is 8, which means eight asynchronous operations can
@@ -673,7 +752,10 @@ FUNCTIONS
             requests, however, is unlimited).
 
             IO::AIO starts threads only on demand, when an AIO request is
-            queued and no free thread exists.
+            queued and no free thread exists. Please note that queueing up a
+            hundred requests can create demand for a hundred threads, even
+            if it turns out that everything is in the cache and could have
+            been processed faster by a single thread.
 
             It is recommended to keep the number of threads relatively low,
             as some Linux kernel versions will scale negatively with the
@@ -699,6 +781,22 @@ FUNCTIONS
 
             Under normal circumstances you don't need to call this function.
 
+        IO::AIO::max_idle $nthreads
+            Limit the number of threads (default: 4) that are allowed to
+            idle (i.e., threads that did not get a request to process within
+            10 seconds). That means if a thread becomes idle while $nthreads
+            other threads are also idle, it will free its resources and
+            exit.
+
+            This is useful when you allow a large number of threads (e.g.
+            100 or 1000) to allow for extremely high load situations, but
+            want to free resources under normal circumstances (1000 threads
+            can easily consume 30MB of RAM).
+
+            The default is probably ok in most situations, especially if
+            thread creation is fast. If thread creation is very slow on your
+            system you might want to use larger values.
+
         $oldmaxreqs = IO::AIO::max_outstanding $maxreqs
             This is a very bad function to use in interactive programs
             because it blocks, and a bad way to reduce concurrency because
@@ -718,6 +816,25 @@ FUNCTIONS
             "max_oustsanding" is mainly useful in simple scripts (with low
             values) or as a stop gap to shield against fatal memory overflow
             (with large values).
+
+   STATISTICAL INFORMATION
+        IO::AIO::nreqs
+            Returns the number of requests currently in the ready, execute
+            or pending states (i.e. for which their callback has not been
+            invoked yet).
+
+            Example: wait till there are no outstanding requests anymore:
+
+               IO::AIO::poll_wait, IO::AIO::poll_cb
+                  while IO::AIO::nreqs;
+
+        IO::AIO::nready
+            Returns the number of requests currently in the ready state (not
+            yet executed).
+
+        IO::AIO::npending
+            Returns the number of requests currently in the pending state
+            (executed, but not yet processed by poll_cb).
 
   FORK BEHAVIOUR
         This module should do "the right thing" when the process using it

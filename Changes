@@ -1,13 +1,27 @@
 Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
+TODO: aio_cp/mvtree/rmtree
+TODO: aio_utime, aio_chmod, aio_chown?
+
+2.1  Sun Oct 29 02:01:57 CET 2006
+        - INCOMPATIBLE CHANGE: replace IO::AIO::poll_some by
+          IO::AIO::max_poll_reqs and IO::AIO::max_poll_time.
+	- fix a bug in aio_move where it would fail everytime
+          it would have to copy files manually.
+	- doc updates.
+	- start threads only on (very low) demand.
+        - end superfluous threads automatically after 10s idling.
+        - add IO::AIO::max_idle to control this.
+	- some tuning applied to random places.
+        - add aio_mknod.
 
 2.0  Thu Oct 26 18:27:58 CEST 2006
 	- minor incompatibility: max_outstanding semantics have changed.
 	- major rewrite, consider all functionality EXPERIMENTAL.
         - aio requests can be cancelled.
         - callbacks can be (re-)set later.
-        - aio requests can have choose 9 priorities.
+        - aio requests can choose between 9 priorities.
         - add aio_group: aio requests can be grouped
           into composite requests.
         - generator interface for groups.
@@ -69,7 +83,7 @@ TODO: better autoconf.pm that can return LIBS etc.
         - abort when the configure script fails.
 
 1.4  Wed Aug 17 08:07:27 CEST 2005
-	- forget to recreate the pipe after forking, this could cause
+	- forgot to recreate the pipe after forking, this could cause
           deadlocks.
 
 1.3  Wed Aug 17 07:25:54 CEST 2005
