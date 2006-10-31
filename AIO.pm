@@ -63,11 +63,12 @@ normally done sequentially, e.g. stat'ing many files, which is much faster
 on a RAID volume or over NFS when you do a number of stat operations
 concurrently.
 
-While this works on all types of file descriptors (for example sockets),
-using these functions on file descriptors that support nonblocking
-operation (again, sockets, pipes etc.) is very inefficient. Use an event
-loop for that (such as the L<Event|Event> module): IO::AIO will naturally
-fit into such an event loop itself.
+While most of this works on all types of file descriptors (for example
+sockets), using these functions on file descriptors that support
+nonblocking operation (again, sockets, pipes etc.) is very inefficient or
+might not work (aio_read fails on sockets/pipes/fifos). Use an event loop
+for that (such as the L<Event|Event> module): IO::AIO will naturally fit
+into such an event loop itself.
 
 In this version, a number of threads are started that execute your
 requests and signal their completion. You don't need thread support
@@ -178,6 +179,8 @@ Request has reached the end of its lifetime and holds no resources anymore
 aio request is severed and calling its methods will either do nothing or
 result in a runtime error).
 
+=back
+
 =cut
 
 package IO::AIO;
@@ -188,12 +191,12 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.1';
+   our $VERSION = '2.2';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
-                     aio_fsync aio_fdatasync aio_readahead aio_rename aio_link aio_move
-                     aio_copy aio_group aio_nop aio_mknod);
+                     aio_readlink aio_fsync aio_fdatasync aio_readahead aio_rename aio_link
+                     aio_move aio_copy aio_group aio_nop aio_mknod);
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
@@ -416,6 +419,12 @@ the path C<$dstpath> and call the callback with the result code.
 
 Asynchronously create a new symbolic link to the existing object at C<$srcpath> at
 the path C<$dstpath> and call the callback with the result code.
+
+=item aio_readlink $path, $callback->($link)
+
+Asynchronously read the symlink specified by C<$path> and pass it to
+the callback. If an error occurs, nothing or undef gets passed to the
+callback.
 
 =item aio_rename $srcpath, $dstpath, $callback->($status)
 
@@ -939,6 +948,11 @@ the maximum amount of time (default C<0>, meaning infinity) spent in
 C<IO::AIO::poll_cb> to process requests (more correctly the mininum amount
 of time C<poll_cb> is allowed to use).
 
+Setting C<max_poll_time> to a non-zero value creates an overhead of one
+syscall per request processed, which is not normally a problem unless your
+callbacks are really really fast or your OS is really really slow (I am
+not mentioning Solaris here). Using C<max_poll_reqs> incurs no overhead.
+
 Setting these is useful if you want to ensure some level of
 interactiveness when perl is not fast enough to process all requests in
 time.
@@ -946,7 +960,7 @@ time.
 For interactive programs, values such as C<0.01> to C<0.1> should be fine.
 
 Example: Install an Event watcher that automatically calls
-IO::AIO::poll_some with low priority, to ensure that other parts of the
+IO::AIO::poll_cb with low priority, to ensure that other parts of the
 program get the CPU sometimes even under high AIO load.
 
    # try not to spend much more than 0.1s in poll_cb

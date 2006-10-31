@@ -1,8 +1,18 @@
 Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
-TODO: aio_cp/mvtree/rmtree
-TODO: aio_utime, aio_chmod, aio_chown?
+TODO: aio_cptree/mvtree/rmtree
+TODO: aio_utime, aio_chmod, aio_chown? should simply stat/open first?
+TODO: reduce condvar fairness: schedule hot-cache-threads first?
+
+2.2  Tue Oct 31 00:31:00 CET 2006
+	- minor doc updates.
+        - added aio_readlink.
+        - properly zero-terminate aio_read buffer.
+        - fix aio_read/write with nonzero dataoffset.
+        - reduced size of aio request structure.
+        - better diagnostics when pathnames etc. are not byte-encoded;
+          do not leak request in that case, either.
 
 2.1  Sun Oct 29 02:01:57 CET 2006
         - INCOMPATIBLE CHANGE: replace IO::AIO::poll_some by

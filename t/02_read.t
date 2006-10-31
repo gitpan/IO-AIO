@@ -37,10 +37,10 @@ sysread $pwd, $sysread, 15;
 
 # I found no way to silence the stupid "uninitialized...subroutine entry" warning.
 # this is just braindamaged. Don't use -w, it introduces more bugs than it fixes.
-$aioread = "";
+$aioread = "xxx";
 
-aio_read $pwd, 7, 15, $aioread, 0, sub {
-   print +($aioread eq $sysread) ? "ok" : "not ok", " 2\n";
+aio_read $pwd, 7, 15, $aioread, 3, sub {
+   print +($aioread eq "xxx$sysread") ? "ok" : "not ok", " 2\n";
 };
 
 pcb;

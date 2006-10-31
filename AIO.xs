@@ -89,6 +89,8 @@
   if (!aio_buf)					\
     return -1;
 
+typedef SV SV8; /* byte-sv, used for argument-checking */
+
 enum {
   REQ_QUIT,
   REQ_OPEN, REQ_CLOSE,
@@ -98,7 +100,7 @@ enum {
   REQ_FSYNC, REQ_FDATASYNC,
   REQ_UNLINK, REQ_RMDIR, REQ_RENAME,
   REQ_MKNOD, REQ_READDIR,
-  REQ_LINK, REQ_SYMLINK,
+  REQ_LINK, REQ_SYMLINK, REQ_READLINK,
   REQ_GROUP, REQ_NOP,
   REQ_BUSY,
 };
@@ -110,17 +112,16 @@ typedef struct aio_cb
 {
   struct aio_cb *volatile next;
 
-  SV *data, *callback;
-  SV *fh, *fh2;
-  void *dataptr, *data2ptr;
-  Stat_t *statdata;
-  off_t offset;
-  size_t length;
+  SV *callback, *fh;
+  SV *sv1, *sv2;
+  void *ptr1, *ptr2;
+  off_t offs;
+  size_t size;
   ssize_t result;
 
-  STRLEN dataoffset;
+  STRLEN stroffset;
   int type;
-  int fd, fd2;
+  int int1, int2;
   int errorno;
   mode_t mode; /* open */
 
@@ -132,7 +133,9 @@ typedef struct aio_cb
 } aio_cb;
 
 enum {
-  FLAG_CANCELLED = 0x01,
+  FLAG_CANCELLED     = 0x01, /* request was cancelled */
+  FLAG_SV1_RO_OFF    = 0x40, /* data was set readonly */
+  FLAG_PTR2_FREE     = 0x80, /* need to free(ptr2) */
 };
 
 typedef aio_cb *aio_req;
@@ -349,11 +352,11 @@ static aio_req SvAIO_REQ (SV *sv)
 
 static void aio_grp_feed (aio_req grp)
 {
-  while (grp->length < grp->fd2 && !(grp->flags & FLAG_CANCELLED))
+  while (grp->size < grp->int2 && !(grp->flags & FLAG_CANCELLED))
     {
-      int old_len = grp->length;
+      int old_len = grp->size;
 
-      if (grp->fh2 && SvOK (grp->fh2))
+      if (grp->sv2 && SvOK (grp->sv2))
         {
           dSP;
 
@@ -362,17 +365,17 @@ static void aio_grp_feed (aio_req grp)
           PUSHMARK (SP);
           XPUSHs (req_sv (grp, AIO_GRP_KLASS));
           PUTBACK;
-          call_sv (grp->fh2, G_VOID | G_EVAL | G_KEEPERR);
+          call_sv (grp->sv2, G_VOID | G_EVAL | G_KEEPERR);
           SPAGAIN;
           FREETMPS;
           LEAVE;
         }
 
       /* stop if no progress has been made */
-      if (old_len == grp->length)
+      if (old_len == grp->size)
         {
-          SvREFCNT_dec (grp->fh2);
-          grp->fh2 = 0;
+          SvREFCNT_dec (grp->sv2);
+          grp->sv2 = 0;
           break;
         }
     }
@@ -380,13 +383,13 @@ static void aio_grp_feed (aio_req grp)
 
 static void aio_grp_dec (aio_req grp)
 {
-  --grp->length;
+  --grp->size;
 
   /* call feeder, if applicable */
   aio_grp_feed (grp);
 
   /* finish, if done */
-  if (!grp->length && grp->fd)
+  if (!grp->size && grp->int1)
     {
       req_invoke (grp);
       req_free (grp);
@@ -396,6 +399,9 @@ static void aio_grp_dec (aio_req grp)
 static void req_invoke (aio_req req)
 {
   dSP;
+
+  if (req->flags & FLAG_SV1_RO_OFF)
+    SvREADONLY_off (req->sv1);
 
   if (!(req->flags & FLAG_CANCELLED) && SvOK (req->callback))
     {
@@ -413,7 +419,7 @@ static void req_invoke (aio_req req)
               if (req->result >= 0)
                 {
                   int i;
-                  char *buf = req->data2ptr;
+                  char *buf = req->ptr2;
                   AV *av = newAV ();
 
                   av_extend (av, req->result - 1);
@@ -451,12 +457,12 @@ static void req_invoke (aio_req req)
             break;
 
           case REQ_GROUP:
-            req->fd = 2; /* mark group as finished */
+            req->int1 = 2; /* mark group as finished */
 
-            if (req->data)
+            if (req->sv1)
               {
                 int i;
-                AV *av = (AV *)req->data;
+                AV *av = (AV *)req->sv1;
 
                 EXTEND (SP, AvFILL (av) + 1);
                 for (i = 0; i <= AvFILL (av); ++i)
@@ -466,6 +472,30 @@ static void req_invoke (aio_req req)
 
           case REQ_NOP:
           case REQ_BUSY:
+            break;
+
+          case REQ_READLINK:
+            if (req->result > 0)
+              {
+                SvCUR_set (req->sv1, req->result);
+                *SvEND (req->sv1) = 0;
+                PUSHs (req->sv1);
+              }
+            break;
+
+          case REQ_STAT:
+          case REQ_LSTAT:
+          case REQ_FSTAT:
+            PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
+            PL_laststatval = req->result;
+            PL_statcache   = *(Stat_t *)(req->ptr2);
+            PUSHs (sv_2mortal (newSViv (req->result)));
+            break;
+
+          case REQ_READ:
+            SvCUR_set (req->sv1, req->stroffset + (req->result > 0 ? req->result : 0));
+            *SvEND (req->sv1) = 0;
+            PUSHs (sv_2mortal (newSViv (req->result)));
             break;
 
           default:
@@ -512,14 +542,13 @@ static void req_free (aio_req req)
       SvREFCNT_dec (req->self);
     }
 
-  SvREFCNT_dec (req->data);
   SvREFCNT_dec (req->fh);
-  SvREFCNT_dec (req->fh2);
+  SvREFCNT_dec (req->sv1);
+  SvREFCNT_dec (req->sv2);
   SvREFCNT_dec (req->callback);
-  Safefree (req->statdata);
 
-  if (req->type == REQ_READDIR)
-    free (req->data2ptr);
+  if (req->flags & FLAG_PTR2_FREE)
+    free (req->ptr2);
 
   Safefree (req);
 }
@@ -531,8 +560,8 @@ static void req_cancel_subs (aio_req grp)
   if (grp->type != REQ_GROUP)
     return;
 
-  SvREFCNT_dec (grp->fh2);
-  grp->fh2 = 0;
+  SvREFCNT_dec (grp->sv2);
+  grp->sv2 = 0;
 
   for (sub = grp->grp_first; sub; sub = sub->grp_next)
     req_cancel (sub);
@@ -714,26 +743,13 @@ static int poll_cb ()
 
           --nreqs;
 
-          if (req->type == REQ_GROUP && req->length)
+          if (req->type == REQ_GROUP && req->size)
             {
-              req->fd = 1; /* mark request as delayed */
+              req->int1 = 1; /* mark request as delayed */
               continue;
             }
           else
             {
-              if (req->type == REQ_READ)
-                SvCUR_set (req->data, req->dataoffset + (req->result > 0 ? req->result : 0));
-
-              if (req->data2ptr && (req->type == REQ_READ || req->type == REQ_WRITE))
-                SvREADONLY_off (req->data);
-
-              if (req->statdata)
-                {
-                  PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
-                  PL_laststatval = req->result;
-                  PL_statcache   = *(req->statdata);
-                }
-
               req_invoke (req);
 
               count++;
@@ -986,9 +1002,10 @@ static void scandir_ (aio_req req, worker *self)
   int errorno;
 
   LOCK (wrklock);
-  self->dirp = dirp = opendir (req->dataptr);
+  self->dirp = dirp = opendir (req->ptr1);
   self->dbuf = u = malloc (sizeof (*u));
-  req->data2ptr = names = malloc (memlen);
+  req->flags |= FLAG_PTR2_FREE;
+  req->ptr2 = names = malloc (memlen);
   UNLOCK (wrklock);
 
   if (dirp && u && names)
@@ -1012,7 +1029,7 @@ static void scandir_ (aio_req req, worker *self)
               {
                 memlen *= 2;
                 LOCK (wrklock);
-                req->data2ptr = names = realloc (names, memlen);
+                req->ptr2 = names = realloc (names, memlen);
                 UNLOCK (wrklock);
 
                 if (!names)
@@ -1087,35 +1104,36 @@ static void *aio_proc (void *thr_arg)
       if (!(req->flags & FLAG_CANCELLED))
         switch (req->type)
           {
-            case REQ_READ:      req->result = pread     (req->fd, req->dataptr, req->length, req->offset); break;
-            case REQ_WRITE:     req->result = pwrite    (req->fd, req->dataptr, req->length, req->offset); break;
+            case REQ_READ:      req->result = pread     (req->int1, req->ptr1, req->size, req->offs); break;
+            case REQ_WRITE:     req->result = pwrite    (req->int1, req->ptr1, req->size, req->offs); break;
 
-            case REQ_READAHEAD: req->result = readahead (req->fd, req->offset, req->length); break;
-            case REQ_SENDFILE:  req->result = sendfile_ (req->fd, req->fd2, req->offset, req->length, self); break;
+            case REQ_READAHEAD: req->result = readahead (req->int1, req->offs, req->size); break;
+            case REQ_SENDFILE:  req->result = sendfile_ (req->int1, req->int2, req->offs, req->size, self); break;
 
-            case REQ_STAT:      req->result = stat      (req->dataptr, req->statdata); break;
-            case REQ_LSTAT:     req->result = lstat     (req->dataptr, req->statdata); break;
-            case REQ_FSTAT:     req->result = fstat     (req->fd     , req->statdata); break;
+            case REQ_STAT:      req->result = stat      (req->ptr1, (Stat_t *)req->ptr2); break;
+            case REQ_LSTAT:     req->result = lstat     (req->ptr1, (Stat_t *)req->ptr2); break;
+            case REQ_FSTAT:     req->result = fstat     (req->int1, (Stat_t *)req->ptr2); break;
 
-            case REQ_OPEN:      req->result = open      (req->dataptr, req->fd, req->mode); break;
-            case REQ_CLOSE:     req->result = close     (req->fd); break;
-            case REQ_UNLINK:    req->result = unlink    (req->dataptr); break;
-            case REQ_RMDIR:     req->result = rmdir     (req->dataptr); break;
-            case REQ_RENAME:    req->result = rename    (req->data2ptr, req->dataptr); break;
-            case REQ_LINK:      req->result = link      (req->data2ptr, req->dataptr); break;
-            case REQ_SYMLINK:   req->result = symlink   (req->data2ptr, req->dataptr); break;
-            case REQ_MKNOD:     req->result = mknod     (req->data2ptr, req->mode, (dev_t)req->offset); break;
+            case REQ_OPEN:      req->result = open      (req->ptr1, req->int1, req->mode); break;
+            case REQ_CLOSE:     req->result = close     (req->int1); break;
+            case REQ_UNLINK:    req->result = unlink    (req->ptr1); break;
+            case REQ_RMDIR:     req->result = rmdir     (req->ptr1); break;
+            case REQ_RENAME:    req->result = rename    (req->ptr2, req->ptr1); break;
+            case REQ_LINK:      req->result = link      (req->ptr2, req->ptr1); break;
+            case REQ_SYMLINK:   req->result = symlink   (req->ptr2, req->ptr1); break;
+            case REQ_MKNOD:     req->result = mknod     (req->ptr2, req->mode, (dev_t)req->offs); break;
+            case REQ_READLINK:  req->result = readlink  (req->ptr2, req->ptr1, NAME_MAX); break;
 
-            case REQ_FDATASYNC: req->result = fdatasync (req->fd); break;
-            case REQ_FSYNC:     req->result = fsync     (req->fd); break;
+            case REQ_FDATASYNC: req->result = fdatasync (req->int1); break;
+            case REQ_FSYNC:     req->result = fsync     (req->int1); break;
             case REQ_READDIR:   scandir_ (req, self); break;
 
             case REQ_BUSY:
               {
                 struct timeval tv;
 
-                tv.tv_sec  = req->fd;
-                tv.tv_usec = req->fd2;
+                tv.tv_sec  = req->int1;
+                tv.tv_usec = req->int2;
 
                 req->result = select (0, 0, 0, 0, &tv);
               }
@@ -1295,7 +1313,7 @@ max_outstanding (int maxreqs)
 
 void
 aio_open (pathname,flags,mode,callback=&PL_sv_undef)
-	SV *	pathname
+	SV8 *	pathname
         int	flags
         int	mode
         SV *	callback
@@ -1305,9 +1323,9 @@ aio_open (pathname,flags,mode,callback=&PL_sv_undef)
         dREQ;
 
         req->type = REQ_OPEN;
-        req->data = newSVsv (pathname);
-        req->dataptr = SvPVbyte_nolen (req->data);
-        req->fd = flags;
+        req->sv1  = newSVsv (pathname);
+        req->ptr1 = SvPVbyte_nolen (req->sv1);
+        req->int1 = flags;
         req->mode = mode;
 
         REQ_SEND;
@@ -1327,8 +1345,8 @@ aio_close (fh,callback=&PL_sv_undef)
         dREQ;
 
         req->type = ix;
-        req->fh = newSVsv (fh);
-        req->fd = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->fh   = newSVsv (fh);
+        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
 
         REQ_SEND (req);
 }
@@ -1338,7 +1356,7 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 	SV *	fh
         UV	offset
         UV	length
-        SV *	data
+        SV8 *	data
         UV	dataoffset
         SV *	callback
         ALIAS:
@@ -1347,7 +1365,6 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 	PROTOTYPE: $$$$$;$
         PPCODE:
 {
-        aio_req req;
         STRLEN svlen;
         char *svptr = SvPVbyte (data, svlen);
 
@@ -1379,22 +1396,45 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
           dREQ;
 
           req->type = ix;
-          req->fh = newSVsv (fh);
-          req->fd = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
-                                                  : IoOFP (sv_2io (fh)));
-          req->offset = offset;
-          req->length = length;
-          req->data = SvREFCNT_inc (data);
-          req->dataptr = (char *)svptr + dataoffset;
+          req->fh   = newSVsv (fh);
+          req->int1 = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
+                                                    : IoOFP (sv_2io (fh)));
+          req->offs = offset;
+          req->size = length;
+          req->sv1  = SvREFCNT_inc (data);
+          req->ptr1 = (char *)svptr + dataoffset;
+          req->stroffset = dataoffset;
 
           if (!SvREADONLY (data))
             {
               SvREADONLY_on (data);
-              req->data2ptr = (void *)data;
+              req->flags |= FLAG_SV1_RO_OFF;
             }
 
           REQ_SEND;
         }
+}
+
+void
+aio_readlink (path,callback=&PL_sv_undef)
+	SV8 *	path
+        SV *	callback
+	PROTOTYPE: $$;$
+        PPCODE:
+{
+	SV *data;
+        dREQ;
+
+        data = newSV (NAME_MAX);
+        SvPOK_on (data);
+
+        req->type = REQ_READLINK;
+        req->fh   = newSVsv (path);
+        req->ptr2 = SvPVbyte_nolen (req->fh);
+        req->sv1  = data;
+        req->ptr1 = SvPVbyte_nolen (data);
+
+        REQ_SEND;
 }
 
 void
@@ -1410,12 +1450,12 @@ aio_sendfile (out_fh,in_fh,in_offset,length,callback=&PL_sv_undef)
 	dREQ;
 
         req->type = REQ_SENDFILE;
-        req->fh = newSVsv (out_fh);
-        req->fd = PerlIO_fileno (IoIFP (sv_2io (out_fh)));
-        req->fh2 = newSVsv (in_fh);
-        req->fd2 = PerlIO_fileno (IoIFP (sv_2io (in_fh)));
-        req->offset = in_offset;
-        req->length = length;
+        req->fh   = newSVsv (out_fh);
+        req->int1 = PerlIO_fileno (IoIFP (sv_2io (out_fh)));
+        req->sv2  = newSVsv (in_fh);
+        req->int2 = PerlIO_fileno (IoIFP (sv_2io (in_fh)));
+        req->offs = in_offset;
+        req->size = length;
 
         REQ_SEND;
 }
@@ -1432,17 +1472,17 @@ aio_readahead (fh,offset,length,callback=&PL_sv_undef)
 	dREQ;
 
         req->type = REQ_READAHEAD;
-        req->fh = newSVsv (fh);
-        req->fd = PerlIO_fileno (IoIFP (sv_2io (fh)));
-        req->offset = offset;
-        req->length = length;
+        req->fh   = newSVsv (fh);
+        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->offs = offset;
+        req->size = length;
 
         REQ_SEND;
 }
 
 void
 aio_stat (fh_or_path,callback=&PL_sv_undef)
-        SV *		fh_or_path
+        SV8 *		fh_or_path
         SV *		callback
         ALIAS:
            aio_stat  = REQ_STAT
@@ -1451,24 +1491,26 @@ aio_stat (fh_or_path,callback=&PL_sv_undef)
 {
 	dREQ;
 
-        New (0, req->statdata, 1, Stat_t);
-        if (!req->statdata)
+        req->ptr2 = malloc (sizeof (Stat_t));
+        if (!req->ptr2)
           {
             req_free (req);
-            croak ("out of memory during aio_req->statdata allocation");
+            croak ("out of memory during aio_stat statdata allocation");
           }
+
+        req->flags |= FLAG_PTR2_FREE;
 
         if (SvPOK (fh_or_path))
           {
             req->type = ix;
-            req->data = newSVsv (fh_or_path);
-            req->dataptr = SvPVbyte_nolen (req->data);
+            req->sv1  = newSVsv (fh_or_path);
+            req->ptr1 = SvPVbyte_nolen (req->sv1);
           }
         else
           {
             req->type = REQ_FSTAT;
-            req->fh = newSVsv (fh_or_path);
-            req->fd = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+            req->fh   = newSVsv (fh_or_path);
+            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
         REQ_SEND;
@@ -1476,8 +1518,8 @@ aio_stat (fh_or_path,callback=&PL_sv_undef)
 
 void
 aio_unlink (pathname,callback=&PL_sv_undef)
-	SV * pathname
-	SV * callback
+	SV8 *	pathname
+	SV *	callback
         ALIAS:
            aio_unlink  = REQ_UNLINK
            aio_rmdir   = REQ_RMDIR
@@ -1487,17 +1529,17 @@ aio_unlink (pathname,callback=&PL_sv_undef)
 	dREQ;
 	
         req->type = ix;
-	req->data = newSVsv (pathname);
-	req->dataptr = SvPVbyte_nolen (req->data);
-	
+	req->sv1  = newSVsv (pathname);
+	req->ptr1 = SvPVbyte_nolen (req->sv1);
+
 	REQ_SEND;
 }
 
 void
 aio_link (oldpath,newpath,callback=&PL_sv_undef)
-	SV * oldpath
-	SV * newpath
-	SV * callback
+	SV8 *	oldpath
+	SV8 *	newpath
+	SV *	callback
         ALIAS:
            aio_link    = REQ_LINK
            aio_symlink = REQ_SYMLINK
@@ -1507,44 +1549,44 @@ aio_link (oldpath,newpath,callback=&PL_sv_undef)
 	dREQ;
 	
         req->type = ix;
-	req->fh = newSVsv (oldpath);
-	req->data2ptr = SvPVbyte_nolen (req->fh);
-	req->data = newSVsv (newpath);
-	req->dataptr = SvPVbyte_nolen (req->data);
+	req->fh   = newSVsv (oldpath);
+	req->ptr2 = SvPVbyte_nolen (req->fh);
+	req->sv1  = newSVsv (newpath);
+	req->ptr1 = SvPVbyte_nolen (req->sv1);
 	
 	REQ_SEND;
 }
 
 void
 aio_mknod (pathname,mode,dev,callback=&PL_sv_undef)
-	SV * pathname
-	SV * callback
-        UV mode
-        UV dev
+	SV8 *	pathname
+	SV *	callback
+        UV	mode
+        UV	dev
 	PPCODE:
 {
 	dREQ;
 	
         req->type = REQ_MKNOD;
-	req->data = newSVsv (pathname);
-	req->dataptr = SvPVbyte_nolen (req->data);
+	req->sv1  = newSVsv (pathname);
+	req->ptr1 = SvPVbyte_nolen (req->sv1);
         req->mode = (mode_t)mode;
-        req->offset = dev;
+        req->offs = dev;
 	
 	REQ_SEND;
 }
 
 void
 aio_busy (delay,callback=&PL_sv_undef)
-	double delay
-	SV * callback
+	double	delay
+	SV *	callback
 	PPCODE:
 {
 	dREQ;
 
         req->type = REQ_BUSY;
-        req->fd  = delay < 0. ? 0 : delay;
-        req->fd2 = delay < 0. ? 0 : 1000. * (delay - req->fd);
+        req->int1 = delay < 0. ? 0 : delay;
+        req->int2 = delay < 0. ? 0 : 1000. * (delay - req->int1);
 
 	REQ_SEND;
 }
@@ -1558,14 +1600,14 @@ aio_group (callback=&PL_sv_undef)
 	dREQ;
 
         req->type = REQ_GROUP;
-        req_send (req);
 
+        req_send (req);
         XPUSHs (req_sv (req, AIO_GRP_KLASS));
 }
 
 void
 aio_nop (callback=&PL_sv_undef)
-	SV * callback
+	SV *	callback
 	PPCODE:
 {
 	dREQ;
@@ -1698,7 +1740,7 @@ add (aio_req grp, ...)
 	int i;
         aio_req req;
 
-        if (grp->fd == 2)
+        if (grp->int1 == 2)
           croak ("cannot add requests to IO::AIO::GRP after the group finished");
 
 	for (i = 1; i < items; ++i )
@@ -1710,7 +1752,7 @@ add (aio_req grp, ...)
 
             if (req)
               {
-                ++grp->length;
+                ++grp->size;
                 req->grp = grp;
 
                 req->grp_prev = 0;
@@ -1743,8 +1785,8 @@ result (aio_req grp, ...)
         for (i = 1; i < items; ++i )
           av_push (av, newSVsv (ST (i)));
 
-        SvREFCNT_dec (grp->data);
-        grp->data = (SV *)av;
+        SvREFCNT_dec (grp->sv1);
+        grp->sv1 = (SV *)av;
 }
 
 void
@@ -1755,18 +1797,18 @@ errno (aio_req grp, int errorno = errno)
 void
 limit (aio_req grp, int limit)
 	CODE:
-        grp->fd2 = limit;
+        grp->int2 = limit;
         aio_grp_feed (grp);
 
 void
 feed (aio_req grp, SV *callback=&PL_sv_undef)
 	CODE:
 {
-        SvREFCNT_dec (grp->fh2);
-        grp->fh2 = newSVsv (callback);
+        SvREFCNT_dec (grp->sv2);
+        grp->sv2 = newSVsv (callback);
 
-        if (grp->fd2 <= 0)
-          grp->fd2 = 2;
+        if (grp->int2 <= 0)
+          grp->int2 = 2;
 
         aio_grp_feed (grp);
 }
