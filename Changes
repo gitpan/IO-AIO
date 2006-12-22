@@ -4,6 +4,13 @@ TODO: better autoconf.pm that can return LIBS etc.
 TODO: aio_cptree/mvtree/rmtree
 TODO: aio_utime, aio_chmod, aio_chown? should simply stat/open first?
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
+TODO: fix setsig
+
+2.21  Fri Dec 22 05:03:38 CET 2006
+	- minor doc updates.
+	- minor cleanups.
+        - IO::AIO::poll returns request count.
+        - undocumented and unfinished async-signal-reporting.
 
 2.2  Tue Oct 31 00:31:00 CET 2006
 	- minor doc updates.

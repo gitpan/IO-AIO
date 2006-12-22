@@ -5,7 +5,8 @@ SYNOPSIS
      use IO::AIO;
 
      aio_open "/etc/passwd", O_RDONLY, 0, sub {
-        my ($fh) = @_;
+        my $fh = shift
+           or die "/etc/passwd: $!";
         ...
      };
 
@@ -97,7 +98,7 @@ DESCRIPTION
 
        # queue the request to open /etc/passwd
        aio_open "/etc/passwd", O_RDONLY, 0, sub {
-          my $fh = $_[0]
+          my $fh = shift
              or die "error while opening: $!";
 
           # stat'ing filehandles is generally non-blocking
@@ -713,19 +714,20 @@ FUNCTIONS
                       cb => &IO::AIO::poll_cb);
 
     IO::AIO::poll_wait
-        Wait till the result filehandle becomes ready for reading (simply
-        does a "select" on the filehandle. This is useful if you want to
-        synchronously wait for some requests to finish).
+        If there are any outstanding requests and none of them in the result
+        phase, wait till the result filehandle becomes ready for reading
+        (simply does a "select" on the filehandle. This is useful if you
+        want to synchronously wait for some requests to finish).
 
         See "nreqs" for an example.
 
     IO::AIO::poll
         Waits until some requests have been handled.
 
-        Strictly equivalent to:
+        Returns the number of requests processed, but is otherwise strictly
+        equivalent to:
 
            IO::AIO::poll_wait, IO::AIO::poll_cb
-              if IO::AIO::nreqs;
 
     IO::AIO::flush
         Wait till all outstanding AIO requests have been handled.

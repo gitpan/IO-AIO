@@ -7,7 +7,8 @@ IO::AIO - Asynchronous Input/Output
  use IO::AIO;
 
  aio_open "/etc/passwd", O_RDONLY, 0, sub {
-    my ($fh) = @_;
+    my $fh = shift
+       or die "/etc/passwd: $!";
     ...
  };
 
@@ -101,7 +102,7 @@ F</etc/passwd> asynchronously:
 
    # queue the request to open /etc/passwd
    aio_open "/etc/passwd", O_RDONLY, 0, sub {
-      my $fh = $_[0]
+      my $fh = shift
          or die "error while opening: $!";
 
       # stat'ing filehandles is generally non-blocking
@@ -191,13 +192,13 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.2';
+   our $VERSION = '2.21';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
                      aio_readlink aio_fsync aio_fdatasync aio_readahead aio_rename aio_link
                      aio_move aio_copy aio_group aio_nop aio_mknod);
-   our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
+   our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice aio_block));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
                        nreqs nready npending nthreads
@@ -463,50 +464,52 @@ errors are being ignored.
 =cut
 
 sub aio_copy($$;$) {
-   my ($src, $dst, $cb) = @_;
+   aio_block {
+      my ($src, $dst, $cb) = @_;
 
-   my $pri = aioreq_pri;
-   my $grp = aio_group $cb;
+      my $pri = aioreq_pri;
+      my $grp = aio_group $cb;
 
-   aioreq_pri $pri;
-   add $grp aio_open $src, O_RDONLY, 0, sub {
-      if (my $src_fh = $_[0]) {
-         my @stat = stat $src_fh;
+      aioreq_pri $pri;
+      add $grp aio_open $src, O_RDONLY, 0, sub {
+         if (my $src_fh = $_[0]) {
+            my @stat = stat $src_fh;
 
-         aioreq_pri $pri;
-         add $grp aio_open $dst, O_CREAT | O_WRONLY | O_TRUNC, 0200, sub {
-            if (my $dst_fh = $_[0]) {
-               aioreq_pri $pri;
-               add $grp aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
-                  if ($_[0] == $stat[7]) {
-                     $grp->result (0);
-                     close $src_fh;
+            aioreq_pri $pri;
+            add $grp aio_open $dst, O_CREAT | O_WRONLY | O_TRUNC, 0200, sub {
+               if (my $dst_fh = $_[0]) {
+                  aioreq_pri $pri;
+                  add $grp aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
+                     if ($_[0] == $stat[7]) {
+                        $grp->result (0);
+                        close $src_fh;
 
-                     # those should not normally block. should. should.
-                     utime $stat[8], $stat[9], $dst;
-                     chmod $stat[2] & 07777, $dst_fh;
-                     chown $stat[4], $stat[5], $dst_fh;
-                     close $dst_fh;
-                  } else {
-                     $grp->result (-1);
-                     close $src_fh;
-                     close $dst_fh;
+                        # those should not normally block. should. should.
+                        utime $stat[8], $stat[9], $dst;
+                        chmod $stat[2] & 07777, $dst_fh;
+                        chown $stat[4], $stat[5], $dst_fh;
+                        close $dst_fh;
+                     } else {
+                        $grp->result (-1);
+                        close $src_fh;
+                        close $dst_fh;
 
-                     aioreq $pri;
-                     add $grp aio_unlink $dst;
-                  }
-               };
-            } else {
-               $grp->result (-1);
-            }
-         },
+                        aioreq $pri;
+                        add $grp aio_unlink $dst;
+                     }
+                  };
+               } else {
+                  $grp->result (-1);
+               }
+            },
 
-      } else {
-         $grp->result (-1);
-      }
-   };
+         } else {
+            $grp->result (-1);
+         }
+      };
 
-   $grp
+      $grp
+   }
 }
 
 =item aio_move $srcpath, $dstpath, $callback->($status)
@@ -522,29 +525,31 @@ that is successful, unlinking the C<$srcpath>.
 =cut
 
 sub aio_move($$;$) {
-   my ($src, $dst, $cb) = @_;
+   aio_block {
+      my ($src, $dst, $cb) = @_;
 
-   my $pri = aioreq_pri;
-   my $grp = aio_group $cb;
+      my $pri = aioreq_pri;
+      my $grp = aio_group $cb;
 
-   aioreq_pri $pri;
-   add $grp aio_rename $src, $dst, sub {
-      if ($_[0] && $! == EXDEV) {
-         aioreq_pri $pri;
-         add $grp aio_copy $src, $dst, sub {
+      aioreq_pri $pri;
+      add $grp aio_rename $src, $dst, sub {
+         if ($_[0] && $! == EXDEV) {
+            aioreq_pri $pri;
+            add $grp aio_copy $src, $dst, sub {
+               $grp->result ($_[0]);
+
+               if (!$_[0]) {
+                  aioreq_pri $pri;
+                  add $grp aio_unlink $src;
+               }
+            };
+         } else {
             $grp->result ($_[0]);
+         }
+      };
 
-            if (!$_[0]) {
-               aioreq_pri $pri;
-               add $grp aio_unlink $src;
-            }
-         };
-      } else {
-         $grp->result ($_[0]);
-      }
-   };
-
-   $grp
+      $grp
+   }
 }
 
 =item aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
@@ -602,89 +607,91 @@ directory counting heuristic.
 =cut
 
 sub aio_scandir($$$) {
-   my ($path, $maxreq, $cb) = @_;
+   aio_block {
+      my ($path, $maxreq, $cb) = @_;
 
-   my $pri = aioreq_pri;
+      my $pri = aioreq_pri;
 
-   my $grp = aio_group $cb;
+      my $grp = aio_group $cb;
 
-   $maxreq = 4 if $maxreq <= 0;
+      $maxreq = 4 if $maxreq <= 0;
 
-   # stat once
-   aioreq_pri $pri;
-   add $grp aio_stat $path, sub {
-      return $grp->result () if $_[0];
-      my $now = time;
-      my $hash1 = join ":", (stat _)[0,1,3,7,9];
-
-      # read the directory entries
+      # stat once
       aioreq_pri $pri;
-      add $grp aio_readdir $path, sub {
-         my $entries = shift
-            or return $grp->result ();
+      add $grp aio_stat $path, sub {
+         return $grp->result () if $_[0];
+         my $now = time;
+         my $hash1 = join ":", (stat _)[0,1,3,7,9];
 
-         # stat the dir another time
+         # read the directory entries
          aioreq_pri $pri;
-         add $grp aio_stat $path, sub {
-            my $hash2 = join ":", (stat _)[0,1,3,7,9];
+         add $grp aio_readdir $path, sub {
+            my $entries = shift
+               or return $grp->result ();
 
-            my $ndirs;
+            # stat the dir another time
+            aioreq_pri $pri;
+            add $grp aio_stat $path, sub {
+               my $hash2 = join ":", (stat _)[0,1,3,7,9];
 
-            # take the slow route if anything looks fishy
-            if ($hash1 ne $hash2 or (stat _)[9] == $now) {
-               $ndirs = -1;
-            } else {
-               # if nlink == 2, we are finished
-               # on non-posix-fs's, we rely on nlink < 2
-               $ndirs = (stat _)[3] - 2
-                  or return $grp->result ([], $entries);
-            }
+               my $ndirs;
 
-            # sort into likely dirs and likely nondirs
-            # dirs == files without ".", short entries first
-            $entries = [map $_->[0],
-                           sort { $b->[1] cmp $a->[1] }
-                              map [$_, sprintf "%s%04d", (/.\./ ? "1" : "0"), length],
-                                 @$entries];
+               # take the slow route if anything looks fishy
+               if ($hash1 ne $hash2 or (stat _)[9] == $now) {
+                  $ndirs = -1;
+               } else {
+                  # if nlink == 2, we are finished
+                  # on non-posix-fs's, we rely on nlink < 2
+                  $ndirs = (stat _)[3] - 2
+                     or return $grp->result ([], $entries);
+               }
 
-            my (@dirs, @nondirs);
+               # sort into likely dirs and likely nondirs
+               # dirs == files without ".", short entries first
+               $entries = [map $_->[0],
+                              sort { $b->[1] cmp $a->[1] }
+                                 map [$_, sprintf "%s%04d", (/.\./ ? "1" : "0"), length],
+                                    @$entries];
 
-            my $statgrp = add $grp aio_group sub {
-               $grp->result (\@dirs, \@nondirs);
-            };
+               my (@dirs, @nondirs);
 
-            limit $statgrp $maxreq;
-            feed $statgrp sub {
-               return unless @$entries;
-               my $entry = pop @$entries;
+               my $statgrp = add $grp aio_group sub {
+                  $grp->result (\@dirs, \@nondirs);
+               };
 
-               aioreq_pri $pri;
-               add $statgrp aio_stat "$path/$entry/.", sub {
-                  if ($_[0] < 0) {
-                     push @nondirs, $entry;
-                  } else {
-                     # need to check for real directory
-                     aioreq_pri $pri;
-                     add $statgrp aio_lstat "$path/$entry", sub {
-                        if (-d _) {
-                           push @dirs, $entry;
+               limit $statgrp $maxreq;
+               feed $statgrp sub {
+                  return unless @$entries;
+                  my $entry = pop @$entries;
 
-                           unless (--$ndirs) {
-                              push @nondirs, @$entries;
-                              feed $statgrp;
+                  aioreq_pri $pri;
+                  add $statgrp aio_stat "$path/$entry/.", sub {
+                     if ($_[0] < 0) {
+                        push @nondirs, $entry;
+                     } else {
+                        # need to check for real directory
+                        aioreq_pri $pri;
+                        add $statgrp aio_lstat "$path/$entry", sub {
+                           if (-d _) {
+                              push @dirs, $entry;
+
+                              unless (--$ndirs) {
+                                 push @nondirs, @$entries;
+                                 feed $statgrp;
+                              }
+                           } else {
+                              push @nondirs, $entry;
                            }
-                        } else {
-                           push @nondirs, $entry;
                         }
                      }
-                  }
+                  };
                };
             };
          };
       };
-   };
 
-   $grp
+      $grp
+   }
 }
 
 =item aio_fsync $fh, $callback->($status)
@@ -973,9 +980,10 @@ program get the CPU sometimes even under high AIO load.
 
 =item IO::AIO::poll_wait
 
-Wait till the result filehandle becomes ready for reading (simply does a
-C<select> on the filehandle. This is useful if you want to synchronously
-wait for some requests to finish).
+If there are any outstanding requests and none of them in the result
+phase, wait till the result filehandle becomes ready for reading (simply
+does a C<select> on the filehandle. This is useful if you want to
+synchronously wait for some requests to finish).
 
 See C<nreqs> for an example.
 
@@ -983,10 +991,10 @@ See C<nreqs> for an example.
 
 Waits until some requests have been handled.
 
-Strictly equivalent to:
+Returns the number of requests processed, but is otherwise strictly
+equivalent to:
 
    IO::AIO::poll_wait, IO::AIO::poll_cb
-      if IO::AIO::nreqs;
 
 =item IO::AIO::flush
 
@@ -1110,10 +1118,7 @@ sub _fd2fh {
 
 min_parallel 8;
 
-END {
-   min_parallel 1;
-   flush;
-};
+END { flush }
 
 1;
 
