@@ -1448,7 +1448,7 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
         else
           {
             /* read: grow scalar as necessary */
-            svptr = SvGROW (data, length + dataoffset);
+            svptr = SvGROW (data, length + dataoffset + 1);
           }
 
         if (length < 0)
