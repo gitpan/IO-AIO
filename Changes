@@ -6,6 +6,9 @@ TODO: aio_utime, aio_chmod, aio_chown? should simply stat/open first?
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: fix setsig
 
+2.31 Sat Jan  6 03:46:02 CET 2007
+	- added aio_load.
+
 2.3  Sat Dec 23 05:48:07 CET 2006
 	- fix off-by-one bug in aio_read, causing memory corruption
           or crashes.

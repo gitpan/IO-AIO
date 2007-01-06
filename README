@@ -387,6 +387,10 @@ FUNCTIONS
         The callback a single argument which is either "undef" or an
         array-ref with the filenames.
 
+    aio_load $path, $data, $callback->($status)
+        This is a composite request that tries to fully load the given file
+        into memory. Status is the same as with aio_read.
+
     aio_copy $srcpath, $dstpath, $callback->($status)
         Try to copy the *file* (directories not supported as either source
         or destination) from $srcpath to $dstpath and call the callback with

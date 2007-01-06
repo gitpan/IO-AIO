@@ -192,12 +192,12 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.3';
+   our $VERSION = '2.31';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
                      aio_readlink aio_fsync aio_fdatasync aio_readahead aio_rename aio_link
-                     aio_move aio_copy aio_group aio_nop aio_mknod);
+                     aio_move aio_copy aio_group aio_nop aio_mknod aio_load);
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice aio_block));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
@@ -445,6 +445,36 @@ sorted, and will B<NOT> include the C<.> and C<..> entries.
 
 The callback a single argument which is either C<undef> or an array-ref
 with the filenames.
+
+=item aio_load $path, $data, $callback->($status)
+
+This is a composite request that tries to fully load the given file into
+memory. Status is the same as with aio_read.
+
+=cut
+
+sub aio_load($$;$) {
+   aio_block {
+      my ($path, undef, $cb) = @_;
+      my $data = \$_[1];
+
+      my $pri = aioreq_pri;
+      my $grp = aio_group $cb;
+
+      aioreq_pri $pri;
+      add $grp aio_open $path, O_RDONLY, 0, sub {
+         my ($fh) = @_
+            or return $grp->result (-1);
+
+         aioreq_pri $pri;
+         add $grp aio_read $fh, 0, (-s $fh), $$data, 0, sub {
+            $grp->result ($_[0]);
+         };
+      };
+
+      $grp
+   }
+}
 
 =item aio_copy $srcpath, $dstpath, $callback->($status)
 
