@@ -25,7 +25,7 @@ sub run_script(;$$) {
     $ENV{LIBS}     = "";
     $ENV{LINKER}   = $Config{ld}; # nonstandard
 
-    my $status = system $ENV{SHELL}, -c => "cd \Q$wd\E && \Q$script\E --prefix \Q$Config{prefix}\E";
+    my $status = system $ENV{SHELL}, -c => "cd \Q$wd\E && \Q$script\E --prefix \Q$Config{prefixexp}\E";
 
     $status
 }

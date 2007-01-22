@@ -99,7 +99,7 @@ enum {
   REQ_SENDFILE,
   REQ_STAT, REQ_LSTAT, REQ_FSTAT,
   REQ_FSYNC, REQ_FDATASYNC,
-  REQ_UNLINK, REQ_RMDIR, REQ_RENAME,
+  REQ_UNLINK, REQ_RMDIR, REQ_MKDIR, REQ_RENAME,
   REQ_MKNOD, REQ_READDIR,
   REQ_LINK, REQ_SYMLINK, REQ_READLINK,
   REQ_GROUP, REQ_NOP,
@@ -1173,6 +1173,7 @@ static void *aio_proc (void *thr_arg)
             case REQ_CLOSE:     req->result = close     (req->int1); break;
             case REQ_UNLINK:    req->result = unlink    (req->ptr1); break;
             case REQ_RMDIR:     req->result = rmdir     (req->ptr1); break;
+            case REQ_MKDIR:     req->result = mkdir     (req->ptr1, req->mode); break;
             case REQ_RENAME:    req->result = rename    (req->ptr2, req->ptr1); break;
             case REQ_LINK:      req->result = link      (req->ptr2, req->ptr1); break;
             case REQ_SYMLINK:   req->result = symlink   (req->ptr2, req->ptr1); break;
@@ -1598,6 +1599,23 @@ aio_unlink (pathname,callback=&PL_sv_undef)
 }
 
 void
+aio_mkdir (pathname,mode,callback=&PL_sv_undef)
+	SV8 *	pathname
+        UV	mode
+	SV *	callback
+	PPCODE:
+{
+	dREQ;
+	
+        req->type = REQ_MKDIR;
+	req->sv1  = newSVsv (pathname);
+	req->ptr1 = SvPVbyte_nolen (req->sv1);
+        req->mode = mode;
+
+	REQ_SEND;
+}
+
+void
 aio_link (oldpath,newpath,callback=&PL_sv_undef)
 	SV8 *	oldpath
 	SV8 *	newpath
@@ -1622,9 +1640,9 @@ aio_link (oldpath,newpath,callback=&PL_sv_undef)
 void
 aio_mknod (pathname,mode,dev,callback=&PL_sv_undef)
 	SV8 *	pathname
-	SV *	callback
         UV	mode
         UV	dev
+	SV *	callback
 	PPCODE:
 {
 	dREQ;

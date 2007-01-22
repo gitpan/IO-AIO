@@ -192,12 +192,12 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.31';
+   our $VERSION = '2.32';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
                      aio_readlink aio_fsync aio_fdatasync aio_readahead aio_rename aio_link
-                     aio_move aio_copy aio_group aio_nop aio_mknod aio_load);
+                     aio_move aio_copy aio_group aio_nop aio_mknod aio_load aio_rmtree aio_mkdir);
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice aio_block));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
@@ -292,7 +292,9 @@ list. They are the same as used by C<sysopen>.
 Likewise, C<$mode> specifies the mode of the newly created file, if it
 didn't exist and C<O_CREAT> has been given, just like perl's C<sysopen>,
 except that it is mandatory (i.e. use C<0> if you don't create new files,
-and C<0666> or C<0777> if you do).
+and C<0666> or C<0777> if you do). Note that the C<$mode> will be modified
+by the umask in effect then the request is being executed, so better never
+change the umask.
 
 Example:
 
@@ -432,6 +434,12 @@ callback.
 Asynchronously rename the object at C<$srcpath> to C<$dstpath>, just as
 rename(2) and call the callback with the result code.
 
+=item aio_mkdir $pathname, $mode, $callback->($status)
+
+Asynchronously mkdir (create) a directory and call the callback with
+the result code. C<$mode> will be modified by the umask at the time the
+request is executed, so do not change your umask.
+
 =item aio_rmdir $pathname, $callback->($status)
 
 Asynchronously rmdir (delete) a directory and call the callback with the
@@ -463,7 +471,7 @@ sub aio_load($$;$) {
 
       aioreq_pri $pri;
       add $grp aio_open $path, O_RDONLY, 0, sub {
-         my ($fh) = @_
+         my $fh = shift
             or return $grp->result (-1);
 
          aioreq_pri $pri;
@@ -636,7 +644,7 @@ directory counting heuristic.
 
 =cut
 
-sub aio_scandir($$$) {
+sub aio_scandir($$;$) {
    aio_block {
       my ($path, $maxreq, $cb) = @_;
 
@@ -718,6 +726,43 @@ sub aio_scandir($$$) {
                };
             };
          };
+      };
+
+      $grp
+   }
+}
+
+=item aio_rmtree $path, $callback->($status)
+
+Delete a directory tree starting (and including) C<$path>, return the
+status of the final C<rmdir> only.  This is a composite request that
+uses C<aio_scandir> to recurse into and rmdir directories, and unlink
+everything else.
+
+=cut
+
+sub aio_rmtree;
+sub aio_rmtree($;$) {
+   aio_block {
+      my ($path, $cb) = @_;
+
+      my $pri = aioreq_pri;
+      my $grp = aio_group $cb;
+
+      aioreq_pri $pri;
+      add $grp aio_scandir $path, 0, sub {
+         my ($dirs, $nondirs) = @_;
+
+         my $dirgrp = aio_group sub {
+            add $grp aio_rmdir $path, sub {
+               $grp->result ($_[0]);
+            };
+         };
+
+         (aioreq_pri $pri), add $dirgrp aio_rmtree "$path/$_" for @$dirs;
+         (aioreq_pri $pri), add $dirgrp aio_unlink "$path/$_" for @$nondirs;
+
+         add $grp $dirgrp;
       };
 
       $grp

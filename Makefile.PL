@@ -60,6 +60,9 @@ my $mm = MM->new({
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
     LIBS         => ['-lpthread -lrt', '-lpthread', '-lpthreads', ''],
+    PM           => {
+    		    'AIO.pm'		=> '$(INST_LIBDIR)/IO/AIO.pm',
+                    },
     clean        => { FILES => "autoconf/config.h autoconf/config.log autoconf/config.status" },
 });
 

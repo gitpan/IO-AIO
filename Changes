@@ -1,10 +1,18 @@
 Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
-TODO: aio_cptree/mvtree/rmtree
+TODO: aio_cptree/mvtree
 TODO: aio_utime, aio_chmod, aio_chown? should simply stat/open first?
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: fix setsig
+
+2.32 Mon Jan 22 16:56:23 CET 2007
+	- added aio_rmtree.
+        - wow, aio_mkdir was missing.
+        - aio_load did return undef on error, not -1.
+        - use prefixexp not prefix in autoconf.pm
+          (suggested by ... rt.cpan.org unreachable).
+        - avoid installing autoconf.pm.
 
 2.31 Sat Jan  6 03:46:02 CET 2007
 	- added aio_load.

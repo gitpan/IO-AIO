@@ -244,7 +244,9 @@ FUNCTIONS
         Likewise, $mode specifies the mode of the newly created file, if it
         didn't exist and "O_CREAT" has been given, just like perl's
         "sysopen", except that it is mandatory (i.e. use 0 if you don't
-        create new files, and 0666 or 0777 if you do).
+        create new files, and 0666 or 0777 if you do). Note that the $mode
+        will be modified by the umask in effect then the request is being
+        executed, so better never change the umask.
 
         Example:
 
@@ -375,6 +377,11 @@ FUNCTIONS
         Asynchronously rename the object at $srcpath to $dstpath, just as
         rename(2) and call the callback with the result code.
 
+    aio_mkdir $pathname, $mode, $callback->($status)
+        Asynchronously mkdir (create) a directory and call the callback with
+        the result code. $mode will be modified by the umask at the time the
+        request is executed, so do not change your umask.
+
     aio_rmdir $pathname, $callback->($status)
         Asynchronously rmdir (delete) a directory and call the callback with
         the result code.
@@ -466,6 +473,12 @@ FUNCTIONS
         It will also likely work on non-POSIX filesystems with reduced
         efficiency as those tend to return 0 or 1 as link counts, which
         disables the directory counting heuristic.
+
+    aio_rmtree $path, $callback->($status)
+        Delete a directory tree starting (and including) $path, return the
+        status of the final "rmdir" only. This is a composite request that
+        uses "aio_scandir" to recurse into and rmdir directories, and unlink
+        everything else.
 
     aio_fsync $fh, $callback->($status)
         Asynchronously call fsync on the given filehandle and call the
