@@ -6,6 +6,9 @@ TODO: aio_utime, aio_chmod, aio_chown? should simply stat/open first?
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: fix setsig
 
+2.33 Tue Jan 23 23:55:41 CET 2007
+	- fix install path (Andreas J. Koenig).
+
 2.32 Mon Jan 22 16:56:23 CET 2007
 	- added aio_rmtree.
         - wow, aio_mkdir was missing.
