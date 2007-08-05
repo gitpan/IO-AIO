@@ -2,9 +2,27 @@ Revision history for IO::AIO
 
 TODO: better autoconf.pm that can return LIBS etc.
 TODO: aio_cptree/mvtree
-TODO: aio_utime, aio_chmod, aio_chown? should simply stat/open first?
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: fix setsig
+TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
+
+2.4  Sun Aug  5 18:44:22 CEST 2007
+        - add aio_truncate, aio_chmod, aio_chown, aio_utime (linux
+          successfully demonstrated that you can block on futimes...).
+        - allow undef as fileoffset for aio_read/write and use read/write(2)
+          internally (useful for sockets or O_APPEND handles).
+        - allow undef for length in aio_write.
+        - negative dataoffsets work as expected now in aio_read/aio_write.
+        - use NV instead of UV for 32 bit perls and file offsets, as NVs
+          have a larger range then.
+	- shared code between BDB and IO::AIO.
+        - aio_busy was completely broken. now fixed.
+        - readahead emulation now returns something.
+        - correctly set errno to ENOSYS on unimplemented functions
+          (should never happen, though).
+        - large changes to make it partially compile and run on win32,
+          but win32 lacks too much functionality, and perl overrides way
+          too many functions with crashing versions.
 
 2.33 Tue Jan 23 23:55:41 CET 2007
 	- fix install path (Andreas J. Koenig).

@@ -3,6 +3,9 @@
 /* fdatasync(2) is available */
 #undef HAVE_FDATASYNC
 
+/* futimes(2) is available */
+#undef HAVE_FUTIMES
+
 /* pread(2) and pwrite(2) are available */
 #undef HAVE_PREADWRITE
 

@@ -8,9 +8,16 @@ if ($^O =~ /win32/i or $^O =~ /mswin/) {
 
    # configuration on windows is hardcoded - as always
 
-   die "your platform is not standards-compliant, you have to port this module first\n";#d#
+   warn "your platform is not standards-compliant, you have to port this module first\n";
+   warn "using some hardcoded config that will not work on your system\n";
+
+   $INC  = "-I/Perl/lib/CORE -I/sdk/include -I/vc98/include -I/gtk/include -I/gtk/include/pango-1.0 -I/gtk/include/glib-2.0 -I/gtk/lib/glib-2.0/include/ -I/gtk/include/freetype2";
+   $LIBS = ["-L/gtk/lib -lpthreadVC2"];
 
 } else {
+
+   $INC  = "";
+   $LIBS = ['-lpthread -lrt', '-lpthread', '-lpthreads', '-lpthreadVC2', ''];
 
    if ($^O =~ /freebsd/i) {
       print <<EOF;
@@ -59,7 +66,8 @@ my $mm = MM->new({
 	            },
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
-    LIBS         => ['-lpthread -lrt', '-lpthread', '-lpthreads', ''],
+    INC          => $INC,
+    LIBS         => $LIBS,
     PM           => {
     		    'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
                     },

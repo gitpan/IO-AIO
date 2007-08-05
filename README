@@ -63,10 +63,9 @@ DESCRIPTION
 
     While most of this works on all types of file descriptors (for example
     sockets), using these functions on file descriptors that support
-    nonblocking operation (again, sockets, pipes etc.) is very inefficient
-    or might not work (aio_read fails on sockets/pipes/fifos). Use an event
-    loop for that (such as the Event module): IO::AIO will naturally fit
-    into such an event loop itself.
+    nonblocking operation (again, sockets, pipes etc.) is very inefficient.
+    Use an event loop for that (such as the Event module): IO::AIO will
+    naturally fit into such an event loop itself.
 
     In this version, a number of threads are started that execute your
     requests and signal their completion. You don't need thread support in
@@ -78,10 +77,10 @@ DESCRIPTION
     aio_write, so the remaining functionality would have to be implemented
     using threads anyway.
 
-    Although the module will work with in the presence of other (Perl-)
-    threads, it is currently not reentrant in any way, so use appropriate
-    locking yourself, always call "poll_cb" from within the same thread, or
-    never call "poll_cb" (or other "aio_" functions) recursively.
+    Although the module will work in the presence of other (Perl-) threads,
+    it is currently not reentrant in any way, so use appropriate locking
+    yourself, always call "poll_cb" from within the same thread, or never
+    call "poll_cb" (or other "aio_" functions) recursively.
 
   EXAMPLE
     This is a simple example that uses the Event module and loads
@@ -271,14 +270,24 @@ FUNCTIONS
 
     aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
     aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
-        Reads or writes "length" bytes from the specified "fh" and "offset"
-        into the scalar given by "data" and offset "dataoffset" and calls
-        the callback without the actual number of bytes read (or -1 on
-        error, just like the syscall).
+        Reads or writes $length bytes from the specified $fh and $offset
+        into the scalar given by $data and offset $dataoffset and calls the
+        callback without the actual number of bytes read (or -1 on error,
+        just like the syscall).
+
+        If $offset is undefined, then the current file offset will be used
+        (and updated), otherwise the file offset will not be changed by
+        these calls.
+
+        If $length is undefined in "aio_write", use the remaining length of
+        $data.
+
+        If $dataoffset is less than zero, it will be counted from the end of
+        $data.
 
         The $data scalar *MUST NOT* be modified in any way while the request
-        is outstanding. Modifying it can result in segfaults or WW3 (if the
-        necessary/optional hardware is installed).
+        is outstanding. Modifying it can result in segfaults or World War
+        III (if the necessary/optional hardware is installed).
 
         Example: Read 15 bytes at offset 7 into scalar $buffer, starting at
         offset 0 within the scalar:
@@ -345,6 +354,40 @@ FUNCTIONS
               $_[0] and die "stat failed: $!";
               print "size is ", -s _, "\n";
            };
+
+    aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
+        Works like perl's "utime" function (including the special case of
+        $atime and $mtime being undef). Fractional times are supported if
+        the underlying syscalls support them.
+
+        When called with a pathname, uses utimes(2) if available, otherwise
+        utime(2). If called on a file descriptor, uses futimes(2) if
+        available, otherwise returns ENOSYS, so this is not portable.
+
+        Examples:
+
+           # set atime and mtime to current time (basically touch(1)):
+           aio_utime "path", undef, undef;
+           # set atime to current time and mtime to beginning of the epoch:
+           aio_utime "path", time, undef; # undef==0
+
+    aio_chown $fh_or_path, $uid, $gid, $callback->($status)
+        Works like perl's "chown" function, except that "undef" for either
+        $uid or $gid is being interpreted as "do not change" (but -1 can
+        also be used).
+
+        Examples:
+
+           # same as "chown root path" in the shell:
+           aio_chown "path", 0, -1;
+           # same as above:
+           aio_chown "path", 0, undef;
+
+    aio_truncate $fh_or_path, $offset, $callback->($status)
+        Works like truncate(2) or ftruncate(2).
+
+    aio_chmod $fh_or_path, $mode, $callback->($status)
+        Works like perl's "chmod" function.
 
     aio_unlink $pathname, $callback->($status)
         Asynchronously unlink (delete) a file and call the callback with the

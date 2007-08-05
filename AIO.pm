@@ -64,12 +64,11 @@ normally done sequentially, e.g. stat'ing many files, which is much faster
 on a RAID volume or over NFS when you do a number of stat operations
 concurrently.
 
-While most of this works on all types of file descriptors (for example
-sockets), using these functions on file descriptors that support
-nonblocking operation (again, sockets, pipes etc.) is very inefficient or
-might not work (aio_read fails on sockets/pipes/fifos). Use an event loop
-for that (such as the L<Event|Event> module): IO::AIO will naturally fit
-into such an event loop itself.
+While most of this works on all types of file descriptors (for
+example sockets), using these functions on file descriptors that
+support nonblocking operation (again, sockets, pipes etc.) is very
+inefficient. Use an event loop for that (such as the L<Event|Event>
+module): IO::AIO will naturally fit into such an event loop itself.
 
 In this version, a number of threads are started that execute your
 requests and signal their completion. You don't need thread support
@@ -81,10 +80,10 @@ files currently, for example), and they would only support aio_read and
 aio_write, so the remaining functionality would have to be implemented
 using threads anyway.
 
-Although the module will work with in the presence of other (Perl-)
-threads, it is currently not reentrant in any way, so use appropriate
-locking yourself, always call C<poll_cb> from within the same thread, or
-never call C<poll_cb> (or other C<aio_> functions) recursively.
+Although the module will work in the presence of other (Perl-) threads,
+it is currently not reentrant in any way, so use appropriate locking
+yourself, always call C<poll_cb> from within the same thread, or never
+call C<poll_cb> (or other C<aio_> functions) recursively.
 
 =head2 EXAMPLE
 
@@ -192,12 +191,13 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.33';
+   our $VERSION = '2.4';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
                      aio_readlink aio_fsync aio_fdatasync aio_readahead aio_rename aio_link
-                     aio_move aio_copy aio_group aio_nop aio_mknod aio_load aio_rmtree aio_mkdir);
+                     aio_move aio_copy aio_group aio_nop aio_mknod aio_load aio_rmtree aio_mkdir
+                     aio_chown aio_chmod aio_utime aio_truncate);
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice aio_block));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
@@ -273,10 +273,12 @@ open requests (potentially spamming the cache):
       };
    };
 
+
 =item aioreq_nice $pri_adjust
 
 Similar to C<aioreq_pri>, but subtracts the given value from the current
 priority, so the effect is cumulative.
+
 
 =item aio_open $pathname, $flags, $mode, $callback->($fh)
 
@@ -307,6 +309,7 @@ Example:
       }
    };
 
+
 =item aio_close $fh, $callback->($status)
 
 Asynchronously close a file and call the callback with the result
@@ -318,18 +321,27 @@ C<close> or just let filehandles go out of scope.
 This is supposed to be a bug in the API, so that might change. It's
 therefore best to avoid this function.
 
+
 =item aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
 =item aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
-Reads or writes C<length> bytes from the specified C<fh> and C<offset>
-into the scalar given by C<data> and offset C<dataoffset> and calls the
+Reads or writes C<$length> bytes from the specified C<$fh> and C<$offset>
+into the scalar given by C<$data> and offset C<$dataoffset> and calls the
 callback without the actual number of bytes read (or -1 on error, just
 like the syscall).
 
+If C<$offset> is undefined, then the current file offset will be used (and
+updated), otherwise the file offset will not be changed by these calls.
+
+If C<$length>  is undefined in C<aio_write>, use the remaining length of C<$data>.
+
+If C<$dataoffset> is less than zero, it will be counted from the end of
+C<$data>.
+
 The C<$data> scalar I<MUST NOT> be modified in any way while the request
-is outstanding. Modifying it can result in segfaults or WW3 (if the
-necessary/optional hardware is installed).
+is outstanding. Modifying it can result in segfaults or World War III (if
+the necessary/optional hardware is installed).
 
 Example: Read 15 bytes at offset 7 into scalar C<$buffer>, starting at
 offset C<0> within the scalar:
@@ -338,6 +350,7 @@ offset C<0> within the scalar:
       $_[0] > 0 or die "read error: $!";
       print "read $_[0] bytes: <$buffer>\n";
    };
+
 
 =item aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
 
@@ -362,6 +375,7 @@ provides the number of bytes written to C<$out_fh>. Only if the result
 value equals C<$length> one can assume that C<$length> bytes have been
 read.
 
+
 =item aio_readahead $fh,$offset,$length, $callback->($retval)
 
 C<aio_readahead> populates the page cache with data from a file so that
@@ -375,6 +389,7 @@ file. The current file offset of the file is left unchanged.
 
 If that syscall doesn't exist (likely if your OS isn't Linux) it will be
 emulated by simply reading the data, which would have a similar effect.
+
 
 =item aio_stat  $fh_or_path, $callback->($status)
 
@@ -398,10 +413,53 @@ Example: Print the length of F</etc/passwd>:
       print "size is ", -s _, "\n";
    };
 
+
+=item aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
+
+Works like perl's C<utime> function (including the special case of $atime
+and $mtime being undef). Fractional times are supported if the underlying
+syscalls support them.
+
+When called with a pathname, uses utimes(2) if available, otherwise
+utime(2). If called on a file descriptor, uses futimes(2) if available,
+otherwise returns ENOSYS, so this is not portable.
+
+Examples:
+
+   # set atime and mtime to current time (basically touch(1)):
+   aio_utime "path", undef, undef;
+   # set atime to current time and mtime to beginning of the epoch:
+   aio_utime "path", time, undef; # undef==0
+
+
+=item aio_chown $fh_or_path, $uid, $gid, $callback->($status)
+
+Works like perl's C<chown> function, except that C<undef> for either $uid
+or $gid is being interpreted as "do not change" (but -1 can also be used).
+
+Examples:
+
+   # same as "chown root path" in the shell:
+   aio_chown "path", 0, -1;
+   # same as above:
+   aio_chown "path", 0, undef;
+
+
+=item aio_truncate $fh_or_path, $offset, $callback->($status)
+
+Works like truncate(2) or ftruncate(2).
+
+
+=item aio_chmod $fh_or_path, $mode, $callback->($status)
+
+Works like perl's C<chmod> function.
+
+
 =item aio_unlink $pathname, $callback->($status)
 
 Asynchronously unlink (delete) a file and call the callback with the
 result code.
+
 
 =item aio_mknod $path, $mode, $dev, $callback->($status)
 
@@ -413,15 +471,18 @@ The only (POSIX-) portable way of calling this function is:
 
    aio_mknod $path, IO::AIO::S_IFIFO | $mode, 0, sub { ...
 
+
 =item aio_link $srcpath, $dstpath, $callback->($status)
 
 Asynchronously create a new link to the existing object at C<$srcpath> at
 the path C<$dstpath> and call the callback with the result code.
 
+
 =item aio_symlink $srcpath, $dstpath, $callback->($status)
 
 Asynchronously create a new symbolic link to the existing object at C<$srcpath> at
 the path C<$dstpath> and call the callback with the result code.
+
 
 =item aio_readlink $path, $callback->($link)
 
@@ -429,10 +490,12 @@ Asynchronously read the symlink specified by C<$path> and pass it to
 the callback. If an error occurs, nothing or undef gets passed to the
 callback.
 
+
 =item aio_rename $srcpath, $dstpath, $callback->($status)
 
 Asynchronously rename the object at C<$srcpath> to C<$dstpath>, just as
 rename(2) and call the callback with the result code.
+
 
 =item aio_mkdir $pathname, $mode, $callback->($status)
 
@@ -440,10 +503,12 @@ Asynchronously mkdir (create) a directory and call the callback with
 the result code. C<$mode> will be modified by the umask at the time the
 request is executed, so do not change your umask.
 
+
 =item aio_rmdir $pathname, $callback->($status)
 
 Asynchronously rmdir (delete) a directory and call the callback with the
 result code.
+
 
 =item aio_readdir $pathname, $callback->($entries)
 
@@ -453,6 +518,7 @@ sorted, and will B<NOT> include the C<.> and C<..> entries.
 
 The callback a single argument which is either C<undef> or an array-ref
 with the filenames.
+
 
 =item aio_load $path, $data, $callback->($status)
 
@@ -1080,7 +1146,11 @@ Strictly equivalent to:
    IO::AIO::poll_wait, IO::AIO::poll_cb
       while IO::AIO::nreqs;
 
+=back
+
 =head3 CONTROLLING THE NUMBER OF THREADS
+
+=over
 
 =item IO::AIO::min_parallel $nthreads
 
@@ -1149,7 +1219,11 @@ You can still queue as many requests as you want. Therefore,
 C<max_oustsanding> is mainly useful in simple scripts (with low values) or
 as a stop gap to shield against fatal memory overflow (with large values).
 
+=back
+
 =head3 STATISTICAL INFORMATION
+
+=over
 
 =item IO::AIO::nreqs
 

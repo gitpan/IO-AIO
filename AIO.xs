@@ -1,12 +1,4 @@
-/* solaris */
-#define _POSIX_PTHREAD_SEMANTICS 1
-
-#if __linux && !defined(_GNU_SOURCE)
-# define _GNU_SOURCE
-#endif
-
-/* just in case */
-#define _REENTRANT 1
+#include "xthread.h"
 
 #include <errno.h>
 
@@ -14,22 +6,65 @@
 #include "perl.h"
 #include "XSUB.h"
 
-#include "autoconf/config.h"
-
-#include <pthread.h>
-
 #include <stddef.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <sys/time.h>
-#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <limits.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <sched.h>
+
+#ifdef _WIN32
+
+# define SIGIO 0
+  typedef Direntry_t X_DIRENT;
+#undef malloc
+#undef free
+
+// perl overrides all those nice win32 functions
+# undef open
+# undef read
+# undef write
+# undef send
+# undef recv
+# undef stat
+# undef fstat
+# define lstat stat
+# undef truncate
+# undef ftruncate
+# undef open
+# undef close
+# undef unlink
+# undef rmdir
+# undef rename
+# undef lseek
+
+# define chown(a,b,c)    (errno = ENOSYS, -1)
+# define fchown(a,b,c)   (errno = ENOSYS, -1)
+# define fchmod(a,b)     (errno = ENOSYS, -1)
+# define symlink(a,b)    (errno = ENOSYS, -1)
+# define readlink(a,b,c) (errno = ENOSYS, -1)
+# define mknod(a,b,c)    (errno = ENOSYS, -1)
+# define truncate(a,b)   (errno = ENOSYS, -1)
+# define ftruncate(fd,o) chsize ((fd), (o))
+# define fsync(fd)       _commit (fd)
+# define opendir(fd)     (errno = ENOSYS, 0)
+# define readdir(fd)     (errno = ENOSYS, -1)
+# define closedir(fd)    (errno = ENOSYS, -1)
+# define mkdir(a,b)      mkdir (a)
+
+#else
+
+# include "autoconf/config.h"
+# include <sys/time.h>
+# include <sys/select.h>
+# include <unistd.h>
+# include <utime.h>
+# include <signal.h>
+  typedef struct dirent X_DIRENT;
+
+#endif
 
 #if HAVE_SENDFILE
 # if __linux
@@ -54,39 +89,21 @@
 # define NAME_MAX 4096
 #endif
 
-#ifndef PTHREAD_STACK_MIN
-/* care for broken platforms, e.g. windows */
-# define PTHREAD_STACK_MIN 16384
-#endif
-
-#if __ia64
-# define STACKSIZE 65536
-#elif __i386 || __x86_64 /* 16k is unreasonably high :( */
-# define STACKSIZE PTHREAD_STACK_MIN
-#else
-# define STACKSIZE 16384
-#endif
-
-/* wether word reads are potentially non-atomic.
- * this is conservatice, likely most arches this runs
- * on have atomic word read/writes.
- */
-#ifndef WORDACCESS_UNSAFE
-# if __i386 || __x86_64
-#  define WORDACCESS_UNSAFE 0
-# else
-#  define WORDACCESS_UNSAFE 1
-# endif
-#endif
-
 /* buffer size for various temporary buffers */
 #define AIO_BUFSIZE 65536
 
+/* use NV for 32 bit perls as it allows larger offsets */
+#if IVSIZE >= 8
+# define SvVAL64 SvIV
+#else
+# define SvVAL64 SvNV
+#endif
+
 #define dBUF	 				\
   char *aio_buf;				\
-  LOCK (wrklock);				\
+  X_LOCK (wrklock);				\
   self->dbuf = aio_buf = malloc (AIO_BUFSIZE);	\
-  UNLOCK (wrklock);				\
+  X_UNLOCK (wrklock);				\
   if (!aio_buf)					\
     return -1;
 
@@ -95,9 +112,13 @@ typedef SV SV8; /* byte-sv, used for argument-checking */
 enum {
   REQ_QUIT,
   REQ_OPEN, REQ_CLOSE,
-  REQ_READ, REQ_WRITE, REQ_READAHEAD,
-  REQ_SENDFILE,
+  REQ_READ, REQ_WRITE,
+  REQ_READAHEAD, REQ_SENDFILE,
   REQ_STAT, REQ_LSTAT, REQ_FSTAT,
+  REQ_TRUNCATE, REQ_FTRUNCATE,
+  REQ_UTIME, REQ_FUTIME,
+  REQ_CHMOD, REQ_FCHMOD,
+  REQ_CHOWN, REQ_FCHOWN,
   REQ_FSYNC, REQ_FDATASYNC,
   REQ_UNLINK, REQ_RMDIR, REQ_MKDIR, REQ_RENAME,
   REQ_MKNOD, REQ_READDIR,
@@ -113,16 +134,17 @@ typedef struct aio_cb
 {
   struct aio_cb *volatile next;
 
-  SV *callback, *fh;
+  SV *callback;
   SV *sv1, *sv2;
   void *ptr1, *ptr2;
   off_t offs;
   size_t size;
   ssize_t result;
+  double nv1, nv2;
 
   STRLEN stroffset;
   int type;
-  int int1, int2;
+  int int1, int2, int3;
   int errorno;
   mode_t mode; /* open */
 
@@ -135,7 +157,7 @@ typedef struct aio_cb
 
 enum {
   FLAG_CANCELLED     = 0x01, /* request was cancelled */
-  FLAG_SV1_RO_OFF    = 0x40, /* data was set readonly */
+  FLAG_SV2_RO_OFF    = 0x40, /* data was set readonly */
   FLAG_PTR2_FREE     = 0x80, /* need to free(ptr2) */
 };
 
@@ -163,7 +185,7 @@ static int tvdiff (struct timeval *tv1, struct timeval *tv2)
        + ((tv2->tv_usec - tv1->tv_usec) >> 10);
 }
 
-static pthread_t main_tid;
+static thread_t main_tid;
 static int main_sig;
 static int block_sig_level;
 
@@ -201,23 +223,14 @@ static int next_pri = DEFAULT_PRI + PRI_BIAS;
 
 static unsigned int started, idle, wanted;
 
-#if __linux && defined (PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP)
-# define AIO_MUTEX_INIT PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
-#else
-# define AIO_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
-#endif
-
-#define LOCK(mutex)   pthread_mutex_lock   (&(mutex))
-#define UNLOCK(mutex) pthread_mutex_unlock (&(mutex))
-
 /* worker threads management */
-static pthread_mutex_t wrklock = AIO_MUTEX_INIT;
+static mutex_t wrklock = X_MUTEX_INIT;
 
 typedef struct worker {
   /* locked by wrklock */
   struct worker *prev, *next;
 
-  pthread_t tid;
+  thread_t tid;
 
   /* locked by reslock, reqlock or wrklock */
   aio_req req; /* currently processed request */
@@ -253,11 +266,11 @@ static void worker_free (worker *wrk)
 static volatile unsigned int nreqs, nready, npending;
 static volatile unsigned int max_idle = 4;
 static volatile unsigned int max_outstanding = 0xffffffff;
-static int respipe [2];
+static int respipe [2], respipe_osf [2];
 
-static pthread_mutex_t reslock = AIO_MUTEX_INIT;
-static pthread_mutex_t reqlock = AIO_MUTEX_INIT;
-static pthread_cond_t  reqwait = PTHREAD_COND_INITIALIZER;
+static mutex_t reslock = X_MUTEX_INIT;
+static mutex_t reqlock = X_MUTEX_INIT;
+static cond_t  reqwait = X_COND_INIT;
 
 #if WORDACCESS_UNSAFE
 
@@ -265,9 +278,9 @@ static unsigned int get_nready ()
 {
   unsigned int retval;
 
-  LOCK   (reqlock);
+  X_LOCK   (reqlock);
   retval = nready;
-  UNLOCK (reqlock);
+  X_UNLOCK (reqlock);
 
   return retval;
 }
@@ -276,9 +289,9 @@ static unsigned int get_npending ()
 {
   unsigned int retval;
 
-  LOCK   (reslock);
+  X_LOCK   (reslock);
   retval = npending;
-  UNLOCK (reslock);
+  X_UNLOCK (reslock);
 
   return retval;
 }
@@ -287,9 +300,9 @@ static unsigned int get_nthreads ()
 {
   unsigned int retval;
 
-  LOCK   (wrklock);
+  X_LOCK   (wrklock);
   retval = started;
-  UNLOCK (wrklock);
+  X_UNLOCK (wrklock);
 
   return retval;
 }
@@ -358,7 +371,7 @@ aio_req reqq_shift (reqq *q)
 
 static int poll_cb ();
 static int req_invoke (aio_req req);
-static void req_free (aio_req req);
+static void req_destroy (aio_req req);
 static void req_cancel (aio_req req);
 
 /* must be called at most once */
@@ -434,12 +447,12 @@ static void aio_grp_dec (aio_req grp)
 
       if (!req_invoke (grp))
         {
-          req_free (grp);
+          req_destroy (grp);
           unblock_sig ();
           croak (0);
         }
 
-      req_free (grp);
+      req_destroy (grp);
       unblock_sig ();
     }
 }
@@ -448,8 +461,8 @@ static int req_invoke (aio_req req)
 {
   dSP;
 
-  if (req->flags & FLAG_SV1_RO_OFF)
-    SvREADONLY_off (req->sv1);
+  if (req->flags & FLAG_SV2_RO_OFF)
+    SvREADONLY_off (req->sv2);
 
   if (!(req->flags & FLAG_CANCELLED) && SvOK (req->callback))
     {
@@ -524,9 +537,9 @@ static int req_invoke (aio_req req)
           case REQ_READLINK:
             if (req->result > 0)
               {
-                SvCUR_set (req->sv1, req->result);
-                *SvEND (req->sv1) = 0;
-                PUSHs (req->sv1);
+                SvCUR_set (req->sv2, req->result);
+                *SvEND (req->sv2) = 0;
+                PUSHs (req->sv2);
               }
             break;
 
@@ -540,8 +553,8 @@ static int req_invoke (aio_req req)
             break;
 
           case REQ_READ:
-            SvCUR_set (req->sv1, req->stroffset + (req->result > 0 ? req->result : 0));
-            *SvEND (req->sv1) = 0;
+            SvCUR_set (req->sv2, req->stroffset + (req->result > 0 ? req->result : 0));
+            *SvEND (req->sv2) = 0;
             PUSHs (sv_2mortal (newSViv (req->result)));
             break;
 
@@ -577,7 +590,7 @@ static int req_invoke (aio_req req)
   return !SvTRUE (ERRSV);
 }
 
-static void req_free (aio_req req)
+static void req_destroy (aio_req req)
 {
   if (req->self)
     {
@@ -585,7 +598,6 @@ static void req_free (aio_req req)
       SvREFCNT_dec (req->self);
     }
 
-  SvREFCNT_dec (req->fh);
   SvREFCNT_dec (req->sv1);
   SvREFCNT_dec (req->sv2);
   SvREFCNT_dec (req->callback);
@@ -617,31 +629,43 @@ static void req_cancel (aio_req req)
   req_cancel_subs (req);
 }
 
-static void *aio_proc(void *arg);
+#ifdef USE_SOCKETS_AS_HANDLES
+# define TO_SOCKET(x) (win32_get_osfhandle (x))
+#else
+# define TO_SOCKET(x) (x)
+#endif
+
+static void
+create_pipe (int fd[2])
+{
+#ifdef _WIN32
+  int arg = 1;
+  if (PerlSock_socketpair (AF_UNIX, SOCK_STREAM, 0, fd)
+      || ioctlsocket (TO_SOCKET (fd [0]), FIONBIO, &arg)
+      || ioctlsocket (TO_SOCKET (fd [1]), FIONBIO, &arg))
+#else
+  if (pipe (fd)
+      || fcntl (fd [0], F_SETFL, O_NONBLOCK)
+      || fcntl (fd [1], F_SETFL, O_NONBLOCK))
+#endif
+    croak ("unable to initialize result pipe");
+
+  respipe_osf [0] = TO_SOCKET (respipe [0]);
+  respipe_osf [1] = TO_SOCKET (respipe [1]);
+}
+
+X_THREAD_PROC (aio_proc);
 
 static void start_thread (void)
 {
-  sigset_t fullsigset, oldsigset;
-  pthread_attr_t attr;
-
   worker *wrk = calloc (1, sizeof (worker));
 
   if (!wrk)
     croak ("unable to allocate worker thread data");
 
-  pthread_attr_init (&attr);
-  pthread_attr_setstacksize (&attr, STACKSIZE);
-  pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_DETACHED);
-#ifdef PTHREAD_SCOPE_PROCESS
-  pthread_attr_setscope (&attr, PTHREAD_SCOPE_PROCESS);
-#endif
+  X_LOCK (wrklock);
 
-  sigfillset (&fullsigset);
-
-  LOCK (wrklock);
-  pthread_sigmask (SIG_SETMASK, &fullsigset, &oldsigset);
-
-  if (pthread_create (&wrk->tid, &attr, aio_proc, (void *)wrk) == 0)
+  if (thread_create (&wrk->tid, aio_proc, (void *)wrk))
     {
       wrk->prev = &wrk_first;
       wrk->next = wrk_first.next;
@@ -652,8 +676,7 @@ static void start_thread (void)
   else
     free (wrk);
 
-  pthread_sigmask (SIG_SETMASK, &oldsigset, 0);
-  UNLOCK (wrklock);
+  X_UNLOCK (wrklock);
 }
 
 static void maybe_start_thread ()
@@ -674,11 +697,11 @@ static void req_send (aio_req req)
 
   ++nreqs;
 
-  LOCK (reqlock);
+  X_LOCK (reqlock);
   ++nready;
   reqq_push (&req_queue, req);
-  pthread_cond_signal (&reqwait);
-  UNLOCK (reqlock);
+  X_COND_SIGNAL (reqwait);
+  X_UNLOCK (reqlock);
 
   unblock_sig ();
 
@@ -694,21 +717,21 @@ static void end_thread (void)
   req->type = REQ_QUIT;
   req->pri  = PRI_MAX + PRI_BIAS;
 
-  LOCK (reqlock);
+  X_LOCK (reqlock);
   reqq_push (&req_queue, req);
-  pthread_cond_signal (&reqwait);
-  UNLOCK (reqlock);
+  X_COND_SIGNAL (reqwait);
+  X_UNLOCK (reqlock);
 
-  LOCK (wrklock);
+  X_LOCK (wrklock);
   --started;
-  UNLOCK (wrklock);
+  X_UNLOCK (wrklock);
 }
 
 static void set_max_idle (int nthreads)
 {
-  if (WORDACCESS_UNSAFE) LOCK   (reqlock);
+  if (WORDACCESS_UNSAFE) X_LOCK   (reqlock);
   max_idle = nthreads <= 0 ? 1 : nthreads;
-  if (WORDACCESS_UNSAFE) UNLOCK (reqlock);
+  if (WORDACCESS_UNSAFE) X_UNLOCK (reqlock);
 }
 
 static void min_parallel (int nthreads)
@@ -733,19 +756,19 @@ static void poll_wait ()
   while (nreqs)
     {
       int size;
-      if (WORDACCESS_UNSAFE) LOCK   (reslock);
+      if (WORDACCESS_UNSAFE) X_LOCK   (reslock);
       size = res_queue.size;
-      if (WORDACCESS_UNSAFE) UNLOCK (reslock);
+      if (WORDACCESS_UNSAFE) X_UNLOCK (reslock);
 
       if (size)
         return;
 
       maybe_start_thread ();
 
-      FD_ZERO(&rfd);
-      FD_SET(respipe [0], &rfd);
+      FD_ZERO (&rfd);
+      FD_SET (respipe [0], &rfd);
 
-      select (respipe [0] + 1, &rfd, 0, 0, 0);
+      PerlSock_select (respipe [0] + 1, &rfd, 0, 0, 0);
     }
 }
 
@@ -769,7 +792,7 @@ static int poll_cb ()
         {
           maybe_start_thread ();
 
-          LOCK (reslock);
+          X_LOCK (reslock);
           req = reqq_shift (&res_queue);
 
           if (req)
@@ -780,12 +803,12 @@ static int poll_cb ()
                 {
                   /* read any signals sent by the worker threads */
                   char buf [4];
-                  while (read (respipe [0], buf, 4) == 4)
+                  while (respipe_read (respipe [0], buf, 4) == 4)
                     ;
                 }
             }
 
-          UNLOCK (reslock);
+          X_UNLOCK (reslock);
 
           if (!req)
             break;
@@ -801,7 +824,7 @@ static int poll_cb ()
             {
               if (!req_invoke (req))
                 {
-                  req_free (req);
+                  req_destroy (req);
                   unblock_sig ();
                   croak (0);
                 }
@@ -809,7 +832,7 @@ static int poll_cb ()
               count++;
             }
 
-          req_free (req);
+          req_destroy (req);
 
           if (maxreqs && !--maxreqs)
             break;
@@ -835,18 +858,6 @@ static int poll_cb ()
   return count;
 }
 
-static void create_pipe ()
-{
-  if (pipe (respipe))
-    croak ("unable to initialize result pipe");
-
-  if (fcntl (respipe [0], F_SETFL, O_NONBLOCK))
-    croak ("cannot set result pipe to nonblocking mode");
-
-  if (fcntl (respipe [1], F_SETFL, O_NONBLOCK))
-    croak ("cannot set result pipe to nonblocking mode");
-}
-
 /*****************************************************************************/
 /* work around various missing functions */
 
@@ -859,19 +870,19 @@ static void create_pipe ()
  * normal read/write by using a mutex. slows down execution a lot,
  * but that's your problem, not mine.
  */
-static pthread_mutex_t preadwritelock = PTHREAD_MUTEX_INITIALIZER;
+static mutex_t preadwritelock = X_MUTEX_INIT;
 
 static ssize_t pread (int fd, void *buf, size_t count, off_t offset)
 {
   ssize_t res;
   off_t ooffset;
 
-  LOCK (preadwritelock);
+  X_LOCK (preadwritelock);
   ooffset = lseek (fd, 0, SEEK_CUR);
   lseek (fd, offset, SEEK_SET);
   res = read (fd, buf, count);
   lseek (fd, ooffset, SEEK_SET);
-  UNLOCK (preadwritelock);
+  X_UNLOCK (preadwritelock);
 
   return res;
 }
@@ -881,15 +892,43 @@ static ssize_t pwrite (int fd, void *buf, size_t count, off_t offset)
   ssize_t res;
   off_t ooffset;
 
-  LOCK (preadwritelock);
+  X_LOCK (preadwritelock);
   ooffset = lseek (fd, 0, SEEK_CUR);
   lseek (fd, offset, SEEK_SET);
   res = write (fd, buf, count);
   lseek (fd, offset, SEEK_SET);
-  UNLOCK (preadwritelock);
+  X_UNLOCK (preadwritelock);
 
   return res;
 }
+#endif
+
+#ifndef HAVE_FUTIMES
+
+# define utimes(path,times)  aio_utimes  (path, times)
+# define futimes(fd,times)   aio_futimes (fd, times)
+
+int aio_utimes (const char *filename, const struct timeval times[2])
+{
+  if (times)
+    {
+      struct utimbuf buf;
+
+      buf.actime  = times[0].tv_sec;
+      buf.modtime = times[1].tv_sec;
+
+      return utime (filename, &buf);
+    }
+  else
+    return utime (filename, 0);
+}
+
+int aio_futimes (int fd, const struct timeval tv[2])
+{
+  errno = ENOSYS;
+  return -1;
+}
+
 #endif
 
 #if !HAVE_FDATASYNC
@@ -901,18 +940,20 @@ static ssize_t pwrite (int fd, void *buf, size_t count, off_t offset)
 
 static ssize_t aio_readahead (int fd, off_t offset, size_t count, worker *self)
 {
+  size_t todo = count;
   dBUF;
 
-  while (count > 0)
+  while (todo > 0)
     {
-      size_t len = count < AIO_BUFSIZE ? count : AIO_BUFSIZE;
+      size_t len = todo < AIO_BUFSIZE ? todo : AIO_BUFSIZE;
 
       pread (fd, aio_buf, len, offset);
       offset += len;
-      count  -= len;
+      todo   -= len;
     }
 
   errno = 0;
+  return count;
 }
 
 #endif
@@ -920,14 +961,14 @@ static ssize_t aio_readahead (int fd, off_t offset, size_t count, worker *self)
 #if !HAVE_READDIR_R
 # define readdir_r aio_readdir_r
 
-static pthread_mutex_t readdirlock = PTHREAD_MUTEX_INITIALIZER;
+static mutex_t readdirlock = X_MUTEX_INIT;
   
-static int readdir_r (DIR *dirp, struct dirent *ent, struct dirent **res)
+static int readdir_r (DIR *dirp, X_DIRENT *ent, X_DIRENT **res)
 {
-  struct dirent *e;
+  X_DIRENT *e;
   int errorno;
 
-  LOCK (readdirlock);
+  X_LOCK (readdirlock);
 
   e = readdir (dirp);
   errorno = errno;
@@ -940,7 +981,7 @@ static int readdir_r (DIR *dirp, struct dirent *ent, struct dirent **res)
   else
     *res = 0;
 
-  UNLOCK (readdirlock);
+  X_UNLOCK (readdirlock);
 
   errno = errorno;
   return e ? 0 : -1;
@@ -1046,22 +1087,21 @@ static void scandir_ (aio_req req, worker *self)
   DIR *dirp;
   union
   {    
-    struct dirent d;
-    char b [offsetof (struct dirent, d_name) + NAME_MAX + 1];
+    X_DIRENT d;
+    char b [offsetof (X_DIRENT, d_name) + NAME_MAX + 1];
   } *u;
-  struct dirent *entp;
+  X_DIRENT *entp;
   char *name, *names;
   int memlen = 4096;
   int memofs = 0;
   int res = 0;
-  int errorno;
 
-  LOCK (wrklock);
+  X_LOCK (wrklock);
   self->dirp = dirp = opendir (req->ptr1);
   self->dbuf = u = malloc (sizeof (*u));
   req->flags |= FLAG_PTR2_FREE;
   req->ptr2 = names = malloc (memlen);
-  UNLOCK (wrklock);
+  X_UNLOCK (wrklock);
 
   if (dirp && u && names)
     for (;;)
@@ -1083,9 +1123,9 @@ static void scandir_ (aio_req req, worker *self)
             while (memofs + len > memlen)
               {
                 memlen *= 2;
-                LOCK (wrklock);
+                X_LOCK (wrklock);
                 req->ptr2 = names = realloc (names, memlen);
-                UNLOCK (wrklock);
+                X_UNLOCK (wrklock);
 
                 if (!names)
                   break;
@@ -1104,21 +1144,21 @@ static void scandir_ (aio_req req, worker *self)
 
 /*****************************************************************************/
 
-static void *aio_proc (void *thr_arg)
+X_THREAD_PROC (aio_proc)
 {
+    {//D
   aio_req req;
   struct timespec ts;
   worker *self = (worker *)thr_arg;
 
-  /* try to distribute timeouts somewhat evenly */
-  ts.tv_nsec = (((unsigned long)self + (unsigned long)ts.tv_sec) & 1023UL)
-               * (1000000000UL / 1024UL);
+  /* try to distribute timeouts somewhat randomly */
+  ts.tv_nsec = ((unsigned long)self & 1023UL) * (1000000000UL / 1024UL);
 
   for (;;)
     {
       ts.tv_sec  = time (0) + IDLE_TIMEOUT;
 
-      LOCK (reqlock);
+      X_LOCK (reqlock);
 
       for (;;)
         {
@@ -1129,21 +1169,21 @@ static void *aio_proc (void *thr_arg)
 
           ++idle;
 
-          if (pthread_cond_timedwait (&reqwait, &reqlock, &ts)
+          if (X_COND_TIMEDWAIT (reqwait, reqlock, ts)
               == ETIMEDOUT)
             {
               if (idle > max_idle)
                 {
                   --idle;
-                  UNLOCK (reqlock);
-                  LOCK (wrklock);
+                  X_UNLOCK (reqlock);
+                  X_LOCK (wrklock);
                   --started;
-                  UNLOCK (wrklock);
+                  X_UNLOCK (wrklock);
                   goto quit;
                 }
 
               /* we are allowed to idle, so do so without any timeout */
-              pthread_cond_wait (&reqwait, &reqlock);
+              X_COND_WAIT (reqwait, reqlock);
               ts.tv_sec  = time (0) + IDLE_TIMEOUT;
             }
 
@@ -1152,15 +1192,19 @@ static void *aio_proc (void *thr_arg)
 
       --nready;
 
-      UNLOCK (reqlock);
+      X_UNLOCK (reqlock);
      
       errno = 0; /* strictly unnecessary */
 
       if (!(req->flags & FLAG_CANCELLED))
         switch (req->type)
           {
-            case REQ_READ:      req->result = pread     (req->int1, req->ptr1, req->size, req->offs); break;
-            case REQ_WRITE:     req->result = pwrite    (req->int1, req->ptr1, req->size, req->offs); break;
+            case REQ_READ:      req->result = req->offs >= 0
+                                            ? pread     (req->int1, req->ptr1, req->size, req->offs)
+                                            : read      (req->int1, req->ptr1, req->size); break;
+            case REQ_WRITE:     req->result = req->offs >= 0
+                                            ? pwrite    (req->int1, req->ptr1, req->size, req->offs)
+                                            : write     (req->int1, req->ptr1, req->size); break;
 
             case REQ_READAHEAD: req->result = readahead (req->int1, req->offs, req->size); break;
             case REQ_SENDFILE:  req->result = sendfile_ (req->int1, req->int2, req->offs, req->size, self); break;
@@ -1168,6 +1212,13 @@ static void *aio_proc (void *thr_arg)
             case REQ_STAT:      req->result = stat      (req->ptr1, (Stat_t *)req->ptr2); break;
             case REQ_LSTAT:     req->result = lstat     (req->ptr1, (Stat_t *)req->ptr2); break;
             case REQ_FSTAT:     req->result = fstat     (req->int1, (Stat_t *)req->ptr2); break;
+
+            case REQ_CHOWN:     req->result = chown     (req->ptr1, req->int2, req->int3); break;
+            case REQ_FCHOWN:    req->result = fchown    (req->int1, req->int2, req->int3); break;
+            case REQ_CHMOD:     req->result = chmod     (req->ptr1, req->mode); break;
+            case REQ_FCHMOD:    req->result = fchmod    (req->int1, req->mode); break;
+            case REQ_TRUNCATE:  req->result = truncate  (req->ptr1, req->offs); break;
+            case REQ_FTRUNCATE: req->result = ftruncate (req->int1, req->offs); break;
 
             case REQ_OPEN:      req->result = open      (req->ptr1, req->int1, req->mode); break;
             case REQ_CLOSE:     req->result = close     (req->int1); break;
@@ -1185,13 +1236,42 @@ static void *aio_proc (void *thr_arg)
             case REQ_READDIR:   scandir_ (req, self); break;
 
             case REQ_BUSY:
+#ifdef _WIN32
+	      Sleep (req->nv1 * 1000.);
+#else
               {
                 struct timeval tv;
 
-                tv.tv_sec  = req->int1;
-                tv.tv_usec = req->int2;
+                tv.tv_sec  = req->nv1;
+                tv.tv_usec = (req->nv1 - tv.tv_sec) * 1000000.;
 
                 req->result = select (0, 0, 0, 0, &tv);
+              }
+#endif
+              break;
+
+            case REQ_UTIME:
+            case REQ_FUTIME:
+              {
+                struct timeval tv[2];
+                struct timeval *times;
+
+                if (req->nv1 != -1. || req->nv2 != -1.)
+                  {
+                    tv[0].tv_sec  = req->nv1;
+                    tv[0].tv_usec = (req->nv1 - tv[0].tv_sec) * 1000000.;
+                    tv[1].tv_sec  = req->nv2;
+                    tv[1].tv_usec = (req->nv2 - tv[1].tv_sec) * 1000000.;
+
+                    times = tv;
+                  }
+                else
+                  times = 0;
+
+
+                req->result = req->type == REQ_FUTIME
+                              ? futimes (req->int1, times)
+                              : utimes  (req->ptr1, times);
               }
 
             case REQ_GROUP:
@@ -1202,20 +1282,20 @@ static void *aio_proc (void *thr_arg)
               goto quit;
 
             default:
-              req->result = ENOSYS;
+              req->result = -1;
               break;
           }
 
       req->errorno = errno;
 
-      LOCK (reslock);
+      X_LOCK (reslock);
 
       ++npending;
 
       if (!reqq_push (&res_queue, req))
         {
           /* write a dummy byte to the pipe so fh becomes ready */
-          write (respipe [1], &respipe, 1);
+          respipe_write (respipe_osf [1], (const void *)&respipe_osf, 1);
 
           /* optionally signal the main thread asynchronously */
           if (main_sig)
@@ -1225,43 +1305,44 @@ static void *aio_proc (void *thr_arg)
       self->req = 0;
       worker_clear (self);
 
-      UNLOCK (reslock);
+      X_UNLOCK (reslock);
     }
 
 quit:
-  LOCK (wrklock);
+  X_LOCK (wrklock);
   worker_free (self);
-  UNLOCK (wrklock);
+  X_UNLOCK (wrklock);
 
   return 0;
+    }//D
 }
 
 /*****************************************************************************/
 
 static void atfork_prepare (void)
 {
-  LOCK (wrklock);
-  LOCK (reqlock);
-  LOCK (reslock);
+  X_LOCK (wrklock);
+  X_LOCK (reqlock);
+  X_LOCK (reslock);
 #if !HAVE_PREADWRITE
-  LOCK (preadwritelock);
+  X_LOCK (preadwritelock);
 #endif
 #if !HAVE_READDIR_R
-  LOCK (readdirlock);
+  X_LOCK (readdirlock);
 #endif
 }
 
 static void atfork_parent (void)
 {
 #if !HAVE_READDIR_R
-  UNLOCK (readdirlock);
+  X_UNLOCK (readdirlock);
 #endif
 #if !HAVE_PREADWRITE
-  UNLOCK (preadwritelock);
+  X_UNLOCK (preadwritelock);
 #endif
-  UNLOCK (reslock);
-  UNLOCK (reqlock);
-  UNLOCK (wrklock);
+  X_UNLOCK (reslock);
+  X_UNLOCK (reqlock);
+  X_UNLOCK (wrklock);
 }
 
 static void atfork_child (void)
@@ -1269,17 +1350,17 @@ static void atfork_child (void)
   aio_req prv;
 
   while (prv = reqq_shift (&req_queue))
-    req_free (prv);
+    req_destroy (prv);
 
   while (prv = reqq_shift (&res_queue))
-    req_free (prv);
+    req_destroy (prv);
 
   while (wrk_first.next != &wrk_first)
     {
       worker *wrk = wrk_first.next;
 
       if (wrk->req)
-        req_free (wrk->req);
+        req_destroy (wrk->req);
 
       worker_clear (wrk);
       worker_free (wrk);
@@ -1291,9 +1372,10 @@ static void atfork_child (void)
   nready   = 0;
   npending = 0;
 
-  close (respipe [0]);
-  close (respipe [1]);
-  create_pipe ();
+  respipe_close (respipe [0]);
+  respipe_close (respipe [1]);
+
+  create_pipe (respipe);
 
   atfork_parent ();
 }
@@ -1332,11 +1414,23 @@ BOOT:
         newCONSTSUB (stash, "O_WRONLY", newSViv (O_WRONLY));
         newCONSTSUB (stash, "O_CREAT",  newSViv (O_CREAT));
         newCONSTSUB (stash, "O_TRUNC",  newSViv (O_TRUNC));
+#ifdef _WIN32
+        X_MUTEX_CHECK (wrklock);
+        X_MUTEX_CHECK (reslock);
+        X_MUTEX_CHECK (reqlock);
+        X_MUTEX_CHECK (reqwait);
+        X_MUTEX_CHECK (preadwritelock);
+        X_MUTEX_CHECK (readdirlock);
+
+	X_COND_CHECK  (reqwait);
+#else
         newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
         newCONSTSUB (stash, "SIGIO",    newSViv (SIGIO));
+#endif
 
-	create_pipe ();
-        pthread_atfork (atfork_prepare, atfork_parent, atfork_child);
+        create_pipe (respipe);
+
+        X_THREAD_ATFORK (atfork_prepare, atfork_parent, atfork_child);
 }
 
 void
@@ -1375,11 +1469,7 @@ max_outstanding (int maxreqs)
         RETVAL
 
 void
-aio_open (pathname,flags,mode,callback=&PL_sv_undef)
-	SV8 *	pathname
-        int	flags
-        int	mode
-        SV *	callback
+aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
 	PPCODE:
 {
@@ -1395,9 +1485,7 @@ aio_open (pathname,flags,mode,callback=&PL_sv_undef)
 }
 
 void
-aio_close (fh,callback=&PL_sv_undef)
-	SV *	fh
-        SV *	callback
+aio_close (SV *fh, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $;$
         ALIAS:
            aio_close     = REQ_CLOSE
@@ -1408,20 +1496,14 @@ aio_close (fh,callback=&PL_sv_undef)
         dREQ;
 
         req->type = ix;
-        req->fh   = newSVsv (fh);
+        req->sv1  = newSVsv (fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
 
         REQ_SEND (req);
 }
 
 void
-aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
-	SV *	fh
-        UV	offset
-        UV	length
-        SV8 *	data
-        UV	dataoffset
-        SV *	callback
+aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback=&PL_sv_undef)
         ALIAS:
            aio_read  = REQ_READ
            aio_write = REQ_WRITE
@@ -1430,6 +1512,7 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 {
         STRLEN svlen;
         char *svptr = SvPVbyte (data, svlen);
+        UV len = SvUV (length);
 
         SvUPGRADE (data, SVt_PV);
         SvPOK_on (data);
@@ -1438,40 +1521,40 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
           dataoffset += svlen;
 
         if (dataoffset < 0 || dataoffset > svlen)
-          croak ("data offset outside of string");
+          croak ("dataoffset outside of data scalar");
 
         if (ix == REQ_WRITE)
           {
             /* write: check length and adjust. */
-            if (length < 0 || length + dataoffset > svlen)
-              length = svlen - dataoffset;
+            if (!SvOK (length) || len + dataoffset > svlen)
+              len = svlen - dataoffset;
           }
         else
           {
             /* read: grow scalar as necessary */
-            svptr = SvGROW (data, length + dataoffset + 1);
+            svptr = SvGROW (data, len + dataoffset + 1);
           }
 
-        if (length < 0)
+        if (len < 0)
           croak ("length must not be negative");
 
         {
           dREQ;
 
           req->type = ix;
-          req->fh   = newSVsv (fh);
+          req->sv1  = newSVsv (fh);
           req->int1 = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
                                                     : IoOFP (sv_2io (fh)));
-          req->offs = offset;
-          req->size = length;
-          req->sv1  = SvREFCNT_inc (data);
+          req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
+          req->size = len;
+          req->sv2  = SvREFCNT_inc (data);
           req->ptr1 = (char *)svptr + dataoffset;
           req->stroffset = dataoffset;
 
           if (!SvREADONLY (data))
             {
               SvREADONLY_on (data);
-              req->flags |= FLAG_SV1_RO_OFF;
+              req->flags |= FLAG_SV2_RO_OFF;
             }
 
           REQ_SEND;
@@ -1479,9 +1562,7 @@ aio_read (fh,offset,length,data,dataoffset,callback=&PL_sv_undef)
 }
 
 void
-aio_readlink (path,callback=&PL_sv_undef)
-	SV8 *	path
-        SV *	callback
+aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$;$
         PPCODE:
 {
@@ -1492,61 +1573,50 @@ aio_readlink (path,callback=&PL_sv_undef)
         SvPOK_on (data);
 
         req->type = REQ_READLINK;
-        req->fh   = newSVsv (path);
-        req->ptr2 = SvPVbyte_nolen (req->fh);
-        req->sv1  = data;
+        req->sv1  = newSVsv (path);
+        req->ptr2 = SvPVbyte_nolen (req->sv1);
+        req->sv2  = data;
         req->ptr1 = SvPVbyte_nolen (data);
 
         REQ_SEND;
 }
 
 void
-aio_sendfile (out_fh,in_fh,in_offset,length,callback=&PL_sv_undef)
-        SV *	out_fh
-        SV *	in_fh
-        UV	in_offset
-        UV	length
-        SV *	callback
+aio_sendfile (SV *out_fh, SV *in_fh, SV *in_offset, UV length, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$$;$
         PPCODE:
 {
 	dREQ;
 
         req->type = REQ_SENDFILE;
-        req->fh   = newSVsv (out_fh);
+        req->sv1  = newSVsv (out_fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (out_fh)));
         req->sv2  = newSVsv (in_fh);
         req->int2 = PerlIO_fileno (IoIFP (sv_2io (in_fh)));
-        req->offs = in_offset;
+        req->offs = SvVAL64 (in_offset);
         req->size = length;
 
         REQ_SEND;
 }
 
 void
-aio_readahead (fh,offset,length,callback=&PL_sv_undef)
-        SV *	fh
-        UV	offset
-        IV	length
-        SV *	callback
+aio_readahead (SV *fh, SV *offset, IV length, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
         PPCODE:
 {
 	dREQ;
 
         req->type = REQ_READAHEAD;
-        req->fh   = newSVsv (fh);
+        req->sv1  = newSVsv (fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
-        req->offs = offset;
+        req->offs = SvVAL64 (offset);
         req->size = length;
 
         REQ_SEND;
 }
 
 void
-aio_stat (fh_or_path,callback=&PL_sv_undef)
-        SV8 *		fh_or_path
-        SV *		callback
+aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
         ALIAS:
            aio_stat  = REQ_STAT
            aio_lstat = REQ_LSTAT
@@ -1557,22 +1627,21 @@ aio_stat (fh_or_path,callback=&PL_sv_undef)
         req->ptr2 = malloc (sizeof (Stat_t));
         if (!req->ptr2)
           {
-            req_free (req);
+            req_destroy (req);
             croak ("out of memory during aio_stat statdata allocation");
           }
 
         req->flags |= FLAG_PTR2_FREE;
+        req->sv1 = newSVsv (fh_or_path);
 
         if (SvPOK (fh_or_path))
           {
             req->type = ix;
-            req->sv1  = newSVsv (fh_or_path);
             req->ptr1 = SvPVbyte_nolen (req->sv1);
           }
         else
           {
             req->type = REQ_FSTAT;
-            req->fh   = newSVsv (fh_or_path);
             req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
@@ -1580,9 +1649,101 @@ aio_stat (fh_or_path,callback=&PL_sv_undef)
 }
 
 void
-aio_unlink (pathname,callback=&PL_sv_undef)
-	SV8 *	pathname
-	SV *	callback
+aio_utime (SV8 *fh_or_path, SV *atime, SV *mtime, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+	dREQ;
+
+        req->nv1 = SvOK (atime) ? SvNV (atime) : -1.;
+        req->nv2 = SvOK (mtime) ? SvNV (mtime) : -1.;
+        req->sv1 = newSVsv (fh_or_path);
+
+        if (SvPOK (fh_or_path))
+          {
+            req->type = REQ_UTIME;
+            req->ptr1 = SvPVbyte_nolen (req->sv1);
+          }
+        else
+          {
+            req->type = REQ_FUTIME;
+            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+          }
+
+        REQ_SEND;
+}
+
+void
+aio_truncate (SV8 *fh_or_path, SV *offset, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+	dREQ;
+
+        req->sv1  = newSVsv (fh_or_path);
+        req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
+
+        if (SvPOK (fh_or_path))
+          {
+            req->type = REQ_TRUNCATE;
+            req->ptr1 = SvPVbyte_nolen (req->sv1);
+          }
+        else
+          {
+            req->type = REQ_FTRUNCATE;
+            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+          }
+
+        REQ_SEND;
+}
+
+void
+aio_chmod (SV8 *fh_or_path, int mode, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+	dREQ;
+
+        req->mode = mode;
+        req->sv1  = newSVsv (fh_or_path);
+
+        if (SvPOK (fh_or_path))
+          {
+            req->type = REQ_CHMOD;
+            req->ptr1 = SvPVbyte_nolen (req->sv1);
+          }
+        else
+          {
+            req->type = REQ_FCHMOD;
+            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+          }
+
+        REQ_SEND;
+}
+
+void
+aio_chown (SV8 *fh_or_path, SV *uid, SV *gid, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+	dREQ;
+
+        req->int2 = SvOK (uid) ? SvIV (uid) : -1;
+        req->int3 = SvOK (gid) ? SvIV (gid) : -1;
+        req->sv1  = newSVsv (fh_or_path);
+
+        if (SvPOK (fh_or_path))
+          {
+            req->type = REQ_CHOWN;
+            req->ptr1 = SvPVbyte_nolen (req->sv1);
+          }
+        else
+          {
+            req->type = REQ_FCHOWN;
+            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+          }
+
+        REQ_SEND;
+}
+
+void
+aio_unlink (SV8 *pathname, SV *callback=&PL_sv_undef)
         ALIAS:
            aio_unlink  = REQ_UNLINK
            aio_rmdir   = REQ_RMDIR
@@ -1599,10 +1760,7 @@ aio_unlink (pathname,callback=&PL_sv_undef)
 }
 
 void
-aio_mkdir (pathname,mode,callback=&PL_sv_undef)
-	SV8 *	pathname
-        UV	mode
-	SV *	callback
+aio_mkdir (SV8 *pathname, int mode, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
 	dREQ;
@@ -1616,10 +1774,7 @@ aio_mkdir (pathname,mode,callback=&PL_sv_undef)
 }
 
 void
-aio_link (oldpath,newpath,callback=&PL_sv_undef)
-	SV8 *	oldpath
-	SV8 *	newpath
-	SV *	callback
+aio_link (SV8 *oldpath, SV8 *newpath, SV *callback=&PL_sv_undef)
         ALIAS:
            aio_link    = REQ_LINK
            aio_symlink = REQ_SYMLINK
@@ -1629,8 +1784,8 @@ aio_link (oldpath,newpath,callback=&PL_sv_undef)
 	dREQ;
 	
         req->type = ix;
-	req->fh   = newSVsv (oldpath);
-	req->ptr2 = SvPVbyte_nolen (req->fh);
+	req->sv2  = newSVsv (oldpath);
+	req->ptr2 = SvPVbyte_nolen (req->sv2);
 	req->sv1  = newSVsv (newpath);
 	req->ptr1 = SvPVbyte_nolen (req->sv1);
 	
@@ -1638,11 +1793,7 @@ aio_link (oldpath,newpath,callback=&PL_sv_undef)
 }
 
 void
-aio_mknod (pathname,mode,dev,callback=&PL_sv_undef)
-	SV8 *	pathname
-        UV	mode
-        UV	dev
-	SV *	callback
+aio_mknod (SV8 *pathname, int mode, UV dev, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
 	dREQ;
@@ -1657,23 +1808,19 @@ aio_mknod (pathname,mode,dev,callback=&PL_sv_undef)
 }
 
 void
-aio_busy (delay,callback=&PL_sv_undef)
-	double	delay
-	SV *	callback
+aio_busy (double delay, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
 	dREQ;
 
         req->type = REQ_BUSY;
-        req->int1 = delay < 0. ? 0 : delay;
-        req->int2 = delay < 0. ? 0 : 1000. * (delay - req->int1);
+        req->nv1  = delay < 0. ? 0. : delay;
 
 	REQ_SEND;
 }
 
 void
-aio_group (callback=&PL_sv_undef)
-        SV *	callback
+aio_group (SV *callback=&PL_sv_undef)
 	PROTOTYPE: ;$
         PPCODE:
 {
@@ -1686,8 +1833,7 @@ aio_group (callback=&PL_sv_undef)
 }
 
 void
-aio_nop (callback=&PL_sv_undef)
-	SV *	callback
+aio_nop (SV *callback=&PL_sv_undef)
 	PPCODE:
 {
 	dREQ;
@@ -1768,10 +1914,10 @@ setsig (int signum = SIGIO)
         if (block_sig_level)
           croak ("cannot call IO::AIO::setsig from within aio_block/callback");
 
-        LOCK (reslock);
+        X_LOCK (reslock);
         main_tid = pthread_self ();
         main_sig = signum;
-        UNLOCK (reslock);
+        X_UNLOCK (reslock);
 
         if (main_sig && npending)
 	  pthread_kill (main_tid, main_sig);
@@ -1825,9 +1971,9 @@ int
 nthreads()
 	PROTOTYPE:
 	CODE:
-        if (WORDACCESS_UNSAFE) LOCK   (wrklock);
+        if (WORDACCESS_UNSAFE) X_LOCK   (wrklock);
         RETVAL = started;
-        if (WORDACCESS_UNSAFE) UNLOCK (wrklock);
+        if (WORDACCESS_UNSAFE) X_UNLOCK (wrklock);
 	OUTPUT:
 	RETVAL
 

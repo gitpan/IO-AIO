@@ -4,6 +4,21 @@ AC_CONFIG_HEADERS([config.h])
 
 AC_PROG_CC
 
+AC_CACHE_CHECK(for futimes, ac_cv_futimes, [AC_LINK_IFELSE([[
+#include <sys/types.h>
+#include <sys/time.h>
+#include <utime.h>
+struct timeval tv[2];
+int res;
+int fd;
+int main(void)
+{
+   res = futimes (fd, tv);
+   return 0;
+}
+]],ac_cv_futimes=yes,ac_cv_futimes=no)])
+test $ac_cv_futimes = yes && AC_DEFINE(HAVE_FUTIMES, 1, futimes(2) is available)
+
 AC_CACHE_CHECK(for readahead, ac_cv_readahead, [AC_LINK_IFELSE([
 #include <fcntl.h>
 int main(void)
