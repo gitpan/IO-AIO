@@ -6,6 +6,12 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: fix setsig
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 
+2.41 Mon Sep 24 21:28:21 CEST 2007
+	- after fork, invest some work to make sure that the poll_fileno
+          stays stable (by dup2'ing the new fd over the old one), to make
+          it easier for programs/libs that don't control their forking
+          behaviour and cannot recreate their watchers.
+
 2.4  Sun Aug  5 18:44:22 CEST 2007
         - add aio_truncate, aio_chmod, aio_chown, aio_utime (linux
           successfully demonstrated that you can block on futimes...).

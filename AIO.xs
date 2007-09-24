@@ -266,7 +266,7 @@ static void worker_free (worker *wrk)
 static volatile unsigned int nreqs, nready, npending;
 static volatile unsigned int max_idle = 4;
 static volatile unsigned int max_outstanding = 0xffffffff;
-static int respipe [2], respipe_osf [2];
+static int respipe_osf [2], respipe [2] = { -1, -1 };
 
 static mutex_t reslock = X_MUTEX_INIT;
 static mutex_t reqlock = X_MUTEX_INIT;
@@ -636,19 +636,38 @@ static void req_cancel (aio_req req)
 #endif
 
 static void
-create_pipe (int fd[2])
+create_respipe ()
 {
+  int old_readfd = respipe [0];
+
+  if (respipe [1] >= 0)
+    respipe_close (TO_SOCKET (respipe [1]));
+
 #ifdef _WIN32
-  int arg = 1;
-  if (PerlSock_socketpair (AF_UNIX, SOCK_STREAM, 0, fd)
-      || ioctlsocket (TO_SOCKET (fd [0]), FIONBIO, &arg)
-      || ioctlsocket (TO_SOCKET (fd [1]), FIONBIO, &arg))
+  if (PerlSock_socketpair (AF_UNIX, SOCK_STREAM, 0, respipe))
 #else
-  if (pipe (fd)
-      || fcntl (fd [0], F_SETFL, O_NONBLOCK)
-      || fcntl (fd [1], F_SETFL, O_NONBLOCK))
+  if (pipe (respipe))
 #endif
     croak ("unable to initialize result pipe");
+
+  if (old_readfd >= 0)
+    {
+      if (dup2 (TO_SOCKET (respipe [0]), TO_SOCKET (old_readfd)) < 0)
+        croak ("unable to initialize result pipe(2)");
+
+      respipe_close (respipe [0]);
+      respipe [0] = old_readfd;
+    }
+
+#ifdef _WIN32
+  int arg = 1;
+  if (ioctlsocket (TO_SOCKET (respipe [0]), FIONBIO, &arg)
+      || ioctlsocket (TO_SOCKET (respipe [1]), FIONBIO, &arg))
+#else
+  if (fcntl (respipe [0], F_SETFL, O_NONBLOCK)
+      || fcntl (respipe [1], F_SETFL, O_NONBLOCK))
+#endif
+    croak ("unable to initialize result pipe(3)");
 
   respipe_osf [0] = TO_SOCKET (respipe [0]);
   respipe_osf [1] = TO_SOCKET (respipe [1]);
@@ -1372,10 +1391,7 @@ static void atfork_child (void)
   nready   = 0;
   npending = 0;
 
-  respipe_close (respipe [0]);
-  respipe_close (respipe [1]);
-
-  create_pipe (respipe);
+  create_respipe ();
 
   atfork_parent ();
 }
@@ -1428,7 +1444,7 @@ BOOT:
         newCONSTSUB (stash, "SIGIO",    newSViv (SIGIO));
 #endif
 
-        create_pipe (respipe);
+        create_respipe ();
 
         X_THREAD_ATFORK (atfork_prepare, atfork_parent, atfork_child);
 }

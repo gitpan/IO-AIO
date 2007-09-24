@@ -275,9 +275,9 @@ FUNCTIONS
         callback without the actual number of bytes read (or -1 on error,
         just like the syscall).
 
-        If $offset is undefined, then the current file offset will be used
-        (and updated), otherwise the file offset will not be changed by
-        these calls.
+        If $offset is undefined, then the current file descriptor offset
+        will be used (and updated), otherwise the file descriptor offset
+        will not be changed by these calls.
 
         If $length is undefined in "aio_write", use the remaining length of
         $data.
@@ -853,7 +853,7 @@ FUNCTIONS
         it blocks, and a bad way to reduce concurrency because it is
         inexact: Better use an "aio_group" together with a feed callback.
 
-        Sets the maximum number of outstanding requests to $nreqs. If you to
+        Sets the maximum number of outstanding requests to $nreqs. If you do
         queue up more than this number of requests, the next call to the
         "poll_cb" (and "poll_some" and other functions calling "poll_cb")
         function will block until the limit is no longer exceeded.
@@ -909,7 +909,7 @@ FUNCTIONS
     scalars and other data passed into aio requests will also be locked and
     will consume memory till the request has entered the done state.
 
-    This is now awfully much, so queuing lots of requests is not usually a
+    This is not awfully much, so queuing lots of requests is not usually a
     problem.
 
     Per-thread usage:

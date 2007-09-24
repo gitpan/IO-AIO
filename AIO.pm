@@ -191,7 +191,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.4';
+   our $VERSION = '2.41';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
@@ -331,10 +331,11 @@ into the scalar given by C<$data> and offset C<$dataoffset> and calls the
 callback without the actual number of bytes read (or -1 on error, just
 like the syscall).
 
-If C<$offset> is undefined, then the current file offset will be used (and
-updated), otherwise the file offset will not be changed by these calls.
+If C<$offset> is undefined, then the current file descriptor offset will
+be used (and updated), otherwise the file descriptor offset will not be
+changed by these calls.
 
-If C<$length>  is undefined in C<aio_write>, use the remaining length of C<$data>.
+If C<$length> is undefined in C<aio_write>, use the remaining length of C<$data>.
 
 If C<$dataoffset> is less than zero, it will be counted from the end of
 C<$data>.
@@ -1208,7 +1209,7 @@ blocks, and a bad way to reduce concurrency because it is inexact: Better
 use an C<aio_group> together with a feed callback.
 
 Sets the maximum number of outstanding requests to C<$nreqs>. If you
-to queue up more than this number of requests, the next call to the
+do queue up more than this number of requests, the next call to the
 C<poll_cb> (and C<poll_some> and other functions calling C<poll_cb>)
 function will block until the limit is no longer exceeded.
 
@@ -1297,7 +1298,7 @@ a few hundred bytes), readdir requires a result buffer and so on. Perl
 scalars and other data passed into aio requests will also be locked and
 will consume memory till the request has entered the done state.
 
-This is now awfully much, so queuing lots of requests is not usually a
+This is not awfully much, so queuing lots of requests is not usually a
 problem.
 
 Per-thread usage:
