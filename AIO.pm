@@ -191,7 +191,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.41';
+   our $VERSION = '2.5';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
                      aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
@@ -313,13 +313,19 @@ Example:
 =item aio_close $fh, $callback->($status)
 
 Asynchronously close a file and call the callback with the result
-code. I<WARNING:> although accepted, you should not pass in a perl
-filehandle here, as perl will likely close the file descriptor another
-time when the filehandle is destroyed. Normally, you can safely call perls
-C<close> or just let filehandles go out of scope.
+code.
 
-This is supposed to be a bug in the API, so that might change. It's
-therefore best to avoid this function.
+Unlike the other functions operating on files, this function uses the
+PerlIO layer to close the filehandle. The reason is that the PerlIO API
+insists on closing the underlying fd itself, no matter what, and doesn't
+allow modifications to the fd. Unfortunately, it is not clear that you can
+call PerlIO from different threads (actually, its quite clear that this
+won't work in some cases), so while it likely works perfectly with simple
+file handles (such as the ones created by C<aio_open>) it might fail in
+interesting ways for others.
+
+Having said that, aio_close tries to clean up the filehandle as much as
+possible before handing it to an io thread, and generally does work.
 
 
 =item aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
@@ -1249,22 +1255,6 @@ but not yet processed by poll_cb).
 =back
 
 =cut
-
-# support function to convert a fd into a perl filehandle
-sub _fd2fh {
-   return undef if $_[0] < 0;
-
-   # try to generate nice filehandles
-   my $sym = "IO::AIO::fd#$_[0]";
-   local *$sym;
-
-   open *$sym, "+<&=$_[0]"      # usually works under any unix
-      or open *$sym, "<&=$_[0]" # cygwin needs this
-      or open *$sym, ">&=$_[0]" # or this
-      or return undef;
-
-   *$sym
-}
 
 min_parallel 8;
 

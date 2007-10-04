@@ -99,6 +99,8 @@
 # define SvVAL64 SvNV
 #endif
 
+static HV *stash;
+
 #define dBUF	 				\
   char *aio_buf;				\
   X_LOCK (wrklock);				\
@@ -503,15 +505,30 @@ static int req_invoke (aio_req req)
           case REQ_OPEN:
             {
               /* convert fd to fh */
-              SV *fh;
+              SV *fh = &PL_sv_undef;
 
-              PUSHs (sv_2mortal (newSViv (req->result)));
-              PUTBACK;
-              call_pv ("IO::AIO::_fd2fh", G_SCALAR | G_EVAL);
-              SPAGAIN;
+              if (req->result >= 0)
+                {
+                  GV *gv = (GV *)sv_newmortal ();
+                  int flags = req->int1 & (O_RDONLY | O_WRONLY | O_RDWR);
+                  char sym [64];
+                  int symlen;
+                  
+                  symlen = snprintf (sym, sizeof (sym), "fd#%d", req->result);
+                  gv_init (gv, stash, sym, symlen, 0);
 
-              fh = POPs;
-              PUSHMARK (SP);
+                  symlen = snprintf (
+                     sym,
+                     sizeof (sym),
+                     "%s&=%d",
+                     flags == O_RDONLY ? "<" : flags == O_WRONLY ? ">" : "+<",
+                     req->result
+                  );
+
+                  if (do_open (gv, sym, symlen, 0, 0, 0, 0))
+                    fh = (SV *)gv;
+                }
+
               XPUSHs (fh);
             }
             break;
@@ -1240,7 +1257,7 @@ X_THREAD_PROC (aio_proc)
             case REQ_FTRUNCATE: req->result = ftruncate (req->int1, req->offs); break;
 
             case REQ_OPEN:      req->result = open      (req->ptr1, req->int1, req->mode); break;
-            case REQ_CLOSE:     req->result = close     (req->int1); break;
+            case REQ_CLOSE:     req->result = PerlIO_close ((PerlIO *)req->ptr1); break;
             case REQ_UNLINK:    req->result = unlink    (req->ptr1); break;
             case REQ_RMDIR:     req->result = rmdir     (req->ptr1); break;
             case REQ_MKDIR:     req->result = mkdir     (req->ptr1, req->mode); break;
@@ -1423,7 +1440,7 @@ PROTOTYPES: ENABLE
 
 BOOT:
 {
-	HV *stash = gv_stashpv ("IO::AIO", 1);
+	stash = gv_stashpv ("IO::AIO", 1);
 
         newCONSTSUB (stash, "EXDEV",    newSViv (EXDEV));
         newCONSTSUB (stash, "O_RDONLY", newSViv (O_RDONLY));
@@ -1501,10 +1518,9 @@ aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
 }
 
 void
-aio_close (SV *fh, SV *callback=&PL_sv_undef)
+aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $;$
         ALIAS:
-           aio_close     = REQ_CLOSE
            aio_fsync     = REQ_FSYNC
            aio_fdatasync = REQ_FDATASYNC
 	PPCODE:
@@ -1516,6 +1532,30 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
 
         REQ_SEND (req);
+}
+
+void
+aio_close (SV *fh, SV *callback=&PL_sv_undef)
+	PROTOTYPE: $;$
+	PPCODE:
+{
+  	PerlIO *io = IoIFP (sv_2io (fh));
+        int fd = PerlIO_fileno (io);
+
+        if (fd < 0)
+          croak ("aio_close called with fd-less filehandle");
+
+        PerlIO_binmode (aTHX_ io, 0, 0, 0);
+
+        {
+          dREQ;
+
+          req->type = REQ_CLOSE;
+          req->sv1  = newSVsv (fh);
+          req->ptr1 = (void *)io;
+
+          REQ_SEND (req);
+        }
 }
 
 void

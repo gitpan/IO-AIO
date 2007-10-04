@@ -6,6 +6,11 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: fix setsig
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 
+2.5  Thu Oct  4 14:49:08 CEST 2007
+	- replaced _fd2fh with faster xs code.
+        - aio_close will now try to do "the right thing" and thus might
+          work sensibly for the very first time.
+
 2.41 Mon Sep 24 21:28:21 CEST 2007
 	- after fork, invest some work to make sure that the poll_fileno
           stays stable (by dup2'ing the new fd over the old one), to make
