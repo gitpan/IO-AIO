@@ -529,7 +529,7 @@ static int req_invoke (aio_req req)
                     fh = (SV *)gv;
                 }
 
-              XPUSHs (fh);
+              PUSHs (fh);
             }
             break;
 
@@ -583,11 +583,13 @@ static int req_invoke (aio_req req)
       errno = req->errorno;
 
       PUTBACK;
-      call_sv (req->callback, G_VOID | G_EVAL);
+      call_sv (req->callback, G_VOID | G_EVAL | G_DISCARD);
       SPAGAIN;
 
       FREETMPS;
       LEAVE;
+
+      PUTBACK;
     }
 
   if (req->grp)
@@ -1257,7 +1259,7 @@ X_THREAD_PROC (aio_proc)
             case REQ_FTRUNCATE: req->result = ftruncate (req->int1, req->offs); break;
 
             case REQ_OPEN:      req->result = open      (req->ptr1, req->int1, req->mode); break;
-            case REQ_CLOSE:     req->result = PerlIO_close ((PerlIO *)req->ptr1); break;
+            case REQ_CLOSE:     req->result = close     (req->int1); break;
             case REQ_UNLINK:    req->result = unlink    (req->ptr1); break;
             case REQ_RMDIR:     req->result = rmdir     (req->ptr1); break;
             case REQ_MKDIR:     req->result = mkdir     (req->ptr1, req->mode); break;
@@ -1534,28 +1536,25 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
         REQ_SEND (req);
 }
 
+int
+_dup (int fd)
+	PROTOTYPE: $
+        CODE:
+        RETVAL = dup (fd);
+	OUTPUT:
+        RETVAL
+
 void
-aio_close (SV *fh, SV *callback=&PL_sv_undef)
+_aio_close (int fd, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $;$
 	PPCODE:
 {
-  	PerlIO *io = IoIFP (sv_2io (fh));
-        int fd = PerlIO_fileno (io);
+        dREQ;
 
-        if (fd < 0)
-          croak ("aio_close called with fd-less filehandle");
+        req->type = REQ_CLOSE;
+        req->int1 = fd;
 
-        PerlIO_binmode (aTHX_ io, 0, 0, 0);
-
-        {
-          dREQ;
-
-          req->type = REQ_CLOSE;
-          req->sv1  = newSVsv (fh);
-          req->ptr1 = (void *)io;
-
-          REQ_SEND (req);
-        }
+        REQ_SEND (req);
 }
 
 void

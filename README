@@ -262,19 +262,36 @@ FUNCTIONS
         Asynchronously close a file and call the callback with the result
         code.
 
-        Unlike the other functions operating on files, this function uses
-        the PerlIO layer to close the filehandle. The reason is that the
-        PerlIO API insists on closing the underlying fd itself, no matter
-        what, and doesn't allow modifications to the fd. Unfortunately, it
-        is not clear that you can call PerlIO from different threads
-        (actually, its quite clear that this won't work in some cases), so
-        while it likely works perfectly with simple file handles (such as
-        the ones created by "aio_open") it might fail in interesting ways
-        for others.
+        Unfortunately, you can't do this to perl. Perl *insists* very
+        strongly on closing the file descriptor associated with the
+        filehandle itself. Here is what aio_close will try:
 
-        Having said that, aio_close tries to clean up the filehandle as much
-        as possible before handing it to an io thread, and generally does
-        work.
+           1. dup()licate the fd
+           2. asynchronously close() the duplicated fd
+           3. dup()licate the fd once more
+           4. let perl close() the filehandle
+           5. asynchronously close the duplicated fd
+
+        The idea is that the first close() flushes stuff to disk that
+        closing an fd will flush, so when perl closes the fd, nothing much
+        will need to be flushed. The second async. close() will then flush
+        stuff to disk that closing the last fd to the file will flush.
+
+        Just FYI, SuSv3 has this to say on close:
+
+           All outstanding record locks owned by the process on the file
+           associated with the file descriptor shall be removed.
+
+           If fildes refers to a socket, close() shall cause the socket to be
+           destroyed. ... close() shall block for up to the current linger
+           interval until all data is transmitted.
+           [this actually sounds like a specification bug, but who knows]
+
+        And at least Linux additionally actually flushes stuff on every
+        close, even when the file itself is still open.
+
+        Sounds enourmously inefficient and complicated? Yes... please show
+        me how to nuke perl's fd out of existence...
 
     aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
     aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
