@@ -28,9 +28,12 @@ IO::AIO - Asynchronous Input/Output
  my $grp = aio_group sub { print "all stats done\n" };
  add $grp aio_stat "..." for ...;
 
- # AnyEvent integration
+ # AnyEvent integration (EV, Event, Glib, Tk, urxvt, pureperl...)
  open my $fh, "<&=" . IO::AIO::poll_fileno or die "$!";
  my $w = AnyEvent->io (fh => $fh, poll => 'r', cb => sub { IO::AIO::poll_cb });
+
+ # EV integration
+ my $w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
  # Event integration
  Event->io (fd => IO::AIO::poll_fileno,
@@ -193,13 +196,16 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.51';
+   our $VERSION = '2.6';
 
-   our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close aio_stat
-                     aio_lstat aio_unlink aio_rmdir aio_readdir aio_scandir aio_symlink
-                     aio_readlink aio_fsync aio_fdatasync aio_readahead aio_rename aio_link
-                     aio_move aio_copy aio_group aio_nop aio_mknod aio_load aio_rmtree aio_mkdir
-                     aio_chown aio_chmod aio_utime aio_truncate);
+   our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
+                     aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
+                     aio_scandir aio_symlink aio_readlink aio_sync aio_fsync
+                     aio_fdatasync aio_pathsync aio_readahead
+                     aio_rename aio_link aio_move aio_copy aio_group
+                     aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
+                     aio_chmod aio_utime aio_truncate);
+
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice aio_block));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
@@ -649,7 +655,9 @@ sub aio_copy($$;$) {
                         utime $stat[8], $stat[9], $dst;
                         chmod $stat[2] & 07777, $dst_fh;
                         chown $stat[4], $stat[5], $dst_fh;
-                        close $dst_fh;
+
+                        aioreq_pri $pri;
+                        add $grp aio_close $dst_fh;
                      } else {
                         $grp->result (-1);
                         close $src_fh;
@@ -892,6 +900,10 @@ sub aio_rmtree($;$) {
    }
 }
 
+=item aio_sync $callback->($status)
+
+Asynchronously call sync and call the callback when finished.
+
 =item aio_fsync $fh, $callback->($status)
 
 Asynchronously call fsync on the given filehandle and call the callback
@@ -904,6 +916,46 @@ callback with the fdatasync result code.
 
 If this call isn't available because your OS lacks it or it couldn't be
 detected, it will be emulated by calling C<fsync> instead.
+
+=item aio_pathsync $path, $callback->($status)
+
+This request tries to open, fsync and close the given path. This is a
+composite request intended tosync directories after directory operations
+(E.g. rename). This might not work on all operating systems or have any
+specific effect, but usually it makes sure that directory changes get
+written to disc. It works for anything that can be opened for read-only,
+not just directories.
+
+Passes C<0> when everything went ok, and C<-1> on error.
+
+=cut
+
+sub aio_pathsync($;$) {
+   aio_block {
+      my ($path, $cb) = @_;
+
+      my $pri = aioreq_pri;
+      my $grp = aio_group $cb;
+
+      aioreq_pri $pri;
+      add $grp aio_open $path, O_RDONLY, 0, sub {
+         my ($fh) = @_;
+         if ($fh) {
+            aioreq_pri $pri;
+            add $grp aio_fsync $fh, sub {
+               $grp->result ($_[0]);
+
+               aioreq_pri $pri;
+               add $grp aio_close $fh;
+            };
+         } else {
+            $grp->result (-1);
+         }
+      };
+
+      $grp
+   }
+}
 
 =item aio_group $callback->(...)
 
@@ -1050,7 +1102,7 @@ itself. Useful when you queued a lot of events but got a result early.
 =item $grp->result (...)
 
 Set the result value(s) that will be passed to the group callback when all
-subrequests have finished and set thre groups errno to the current value
+subrequests have finished and set the groups errno to the current value
 of errno (just like calling C<errno> without an error number). By default,
 no argument will be passed and errno is zero.
 

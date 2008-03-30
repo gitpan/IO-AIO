@@ -121,7 +121,7 @@ enum {
   REQ_UTIME, REQ_FUTIME,
   REQ_CHMOD, REQ_FCHMOD,
   REQ_CHOWN, REQ_FCHOWN,
-  REQ_FSYNC, REQ_FDATASYNC,
+  REQ_SYNC, REQ_FSYNC, REQ_FDATASYNC,
   REQ_UNLINK, REQ_RMDIR, REQ_MKDIR, REQ_RENAME,
   REQ_MKNOD, REQ_READDIR,
   REQ_LINK, REQ_SYMLINK, REQ_READLINK,
@@ -191,7 +191,7 @@ static thread_t main_tid;
 static int main_sig;
 static int block_sig_level;
 
-void block_sig ()
+void block_sig (void)
 {
   sigset_t ss;
 
@@ -206,7 +206,7 @@ void block_sig ()
   pthread_sigmask (SIG_BLOCK, &ss, 0);
 }
 
-void unblock_sig ()
+void unblock_sig (void)
 {
   sigset_t ss;
 
@@ -276,7 +276,7 @@ static cond_t  reqwait = X_COND_INIT;
 
 #if WORDACCESS_UNSAFE
 
-static unsigned int get_nready ()
+static unsigned int get_nready (void)
 {
   unsigned int retval;
 
@@ -287,7 +287,7 @@ static unsigned int get_nready ()
   return retval;
 }
 
-static unsigned int get_npending ()
+static unsigned int get_npending (void)
 {
   unsigned int retval;
 
@@ -298,7 +298,7 @@ static unsigned int get_npending ()
   return retval;
 }
 
-static unsigned int get_nthreads ()
+static unsigned int get_nthreads (void)
 {
   unsigned int retval;
 
@@ -371,7 +371,7 @@ aio_req reqq_shift (reqq *q)
   abort ();
 }
 
-static int poll_cb ();
+static int poll_cb (void);
 static int req_invoke (aio_req req);
 static void req_destroy (aio_req req);
 static void req_cancel (aio_req req);
@@ -655,7 +655,7 @@ static void req_cancel (aio_req req)
 #endif
 
 static void
-create_respipe ()
+create_respipe (void)
 {
   int old_readfd = respipe [0];
 
@@ -717,7 +717,7 @@ static void start_thread (void)
   X_UNLOCK (wrklock);
 }
 
-static void maybe_start_thread ()
+static void maybe_start_thread (void)
 {
   if (get_nthreads () >= wanted)
     return;
@@ -787,7 +787,7 @@ static void max_parallel (int nthreads)
     end_thread ();
 }
 
-static void poll_wait ()
+static void poll_wait (void)
 {
   fd_set rfd;
 
@@ -810,7 +810,7 @@ static void poll_wait ()
     }
 }
 
-static int poll_cb ()
+static int poll_cb (void)
 {
   dSP;
   int count = 0;
@@ -1269,8 +1269,10 @@ X_THREAD_PROC (aio_proc)
             case REQ_MKNOD:     req->result = mknod     (req->ptr2, req->mode, (dev_t)req->offs); break;
             case REQ_READLINK:  req->result = readlink  (req->ptr2, req->ptr1, NAME_MAX); break;
 
-            case REQ_FDATASYNC: req->result = fdatasync (req->int1); break;
+            case REQ_SYNC:      req->result = 0; sync (); break;
             case REQ_FSYNC:     req->result = fsync     (req->int1); break;
+            case REQ_FDATASYNC: req->result = fdatasync (req->int1); break;
+
             case REQ_READDIR:   scandir_ (req, self); break;
 
             case REQ_BUSY:
@@ -1889,11 +1891,14 @@ aio_group (SV *callback=&PL_sv_undef)
 
 void
 aio_nop (SV *callback=&PL_sv_undef)
+	ALIAS:
+           aio_nop  = REQ_NOP
+           aio_sync = REQ_SYNC
 	PPCODE:
 {
 	dREQ;
 
-        req->type = REQ_NOP;
+        req->type = ix;
 
 	REQ_SEND;
 }
@@ -1989,7 +1994,6 @@ aio_block (SV *cb)
         PUSHMARK (SP);
         PUTBACK;
         count = call_sv (cb, GIMME_V | G_NOARGS | G_EVAL);
-        SPAGAIN;
         unblock_sig ();
 
         if (SvTRUE (ERRSV))

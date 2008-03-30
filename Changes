@@ -3,8 +3,13 @@ Revision history for IO::AIO
 TODO: better autoconf.pm that can return LIBS etc.
 TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
-TODO: fix setsig
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
+TODO: aio_fcntl, at least for file-locking
+
+2.6  Sun Mar 30 08:28:11 CEST 2008
+	- added aio_sync.
+        - added aio_pathsync.
+        - fix prototypes of (void) functions.
 
 2.51 Sat Oct  6 16:04:54 CEST 2007
 	- perlio isn't generally threadsafe, so aio_close could not work reliably.

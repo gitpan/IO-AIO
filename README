@@ -26,9 +26,12 @@ SYNOPSIS
      my $grp = aio_group sub { print "all stats done\n" };
      add $grp aio_stat "..." for ...;
 
-     # AnyEvent integration
+     # AnyEvent integration (EV, Event, Glib, Tk, urxvt, pureperl...)
      open my $fh, "<&=" . IO::AIO::poll_fileno or die "$!";
      my $w = AnyEvent->io (fh => $fh, poll => 'r', cb => sub { IO::AIO::poll_cb });
+
+     # EV integration
+     my $w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
      # Event integration
      Event->io (fd => IO::AIO::poll_fileno,
@@ -548,6 +551,9 @@ FUNCTIONS
         uses "aio_scandir" to recurse into and rmdir directories, and unlink
         everything else.
 
+    aio_sync $callback->($status)
+        Asynchronously call sync and call the callback when finished.
+
     aio_fsync $fh, $callback->($status)
         Asynchronously call fsync on the given filehandle and call the
         callback with the fsync result code.
@@ -558,6 +564,16 @@ FUNCTIONS
 
         If this call isn't available because your OS lacks it or it couldn't
         be detected, it will be emulated by calling "fsync" instead.
+
+    aio_pathsync $path, $callback->($status)
+        This request tries to open, fsync and close the given path. This is
+        a composite request intended tosync directories after directory
+        operations (E.g. rename). This might not work on all operating
+        systems or have any specific effect, but usually it makes sure that
+        directory changes get written to disc. It works for anything that
+        can be opened for read-only, not just directories.
+
+        Passes 0 when everything went ok, and -1 on error.
 
     aio_group $callback->(...)
         This is a very special aio request: Instead of doing something, it
@@ -649,13 +665,16 @@ FUNCTIONS
     This makes it very easy to create composite requests (see the source of
     "aio_move" for an application) that work and feel like simple requests.
 
-    * The IO::AIO::GRP objects will be cleaned up during calls to
-    "IO::AIO::poll_cb", just like any other request.
-    * They can be canceled like any other request. Canceling will cancel not
-    only the request itself, but also all requests it contains.
-    * They can also can also be added to other IO::AIO::GRP objects.
-    * You must not add requests to a group from within the group callback
-    (or any later time).
+    *   The IO::AIO::GRP objects will be cleaned up during calls to
+        "IO::AIO::poll_cb", just like any other request.
+
+    *   They can be canceled like any other request. Canceling will cancel
+        not only the request itself, but also all requests it contains.
+
+    *   They can also can also be added to other IO::AIO::GRP objects.
+
+    *   You must not add requests to a group from within the group callback
+        (or any later time).
 
     Their lifetime, simplified, looks like this: when they are empty, they
     will finish very quickly. If they contain only requests that are in the
@@ -682,7 +701,7 @@ FUNCTIONS
 
     $grp->result (...)
         Set the result value(s) that will be passed to the group callback
-        when all subrequests have finished and set thre groups errno to the
+        when all subrequests have finished and set the groups errno to the
         current value of errno (just like calling "errno" without an error
         number). By default, no argument will be passed and errno is zero.
 
