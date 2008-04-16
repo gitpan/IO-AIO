@@ -61,7 +61,7 @@ aio_stat *PWD, sub {
 pcb;
 
 aio_close *PWD, sub {
-   print $_[0] ? "not ok" : "ok", " 10\n";
+   print $_[0] ? "not ok" : "ok", " 10 # <@_>\n";
 };
 
 pcb;

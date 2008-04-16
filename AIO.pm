@@ -196,7 +196,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.6';
+   our $VERSION = '2.61';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
@@ -324,65 +324,16 @@ Asynchronously close a file and call the callback with the result
 code.
 
 Unfortunately, you can't do this to perl. Perl I<insists> very strongly on
-closing the file descriptor associated with the filehandle itself. Here is
-what aio_close will try:
+closing the file descriptor associated with the filehandle itself.
 
-   1. dup()licate the fd
-   2. asynchronously close() the duplicated fd
-   3. dup()licate the fd once more
-   4. let perl close() the filehandle
-   5. asynchronously close the duplicated fd
+Therefore, C<aio_close> will not close the filehandle - instead it will
+use dup2 to overwrite the file descriptor with the write-end of a pipe
+(the pipe fd will be created on demand and will be cached).
 
-The idea is that the first close() flushes stuff to disk that closing an
-fd will flush, so when perl closes the fd, nothing much will need to be
-flushed.  The second async. close() will then flush stuff to disk that
-closing the last fd to the file will flush.
-
-Just FYI, SuSv3 has this to say on close:
-
-   All outstanding record locks owned by the process on the file
-   associated with the file descriptor shall be removed.
-
-   If fildes refers to a socket, close() shall cause the socket to be
-   destroyed. ... close() shall block for up to the current linger
-   interval until all data is transmitted.
-   [this actually sounds like a specification bug, but who knows]
-
-And at least Linux additionally actually flushes stuff on every close,
-even when the file itself is still open.
-
-Sounds enourmously inefficient and complicated? Yes... please show me how
-to nuke perl's fd out of existence...
+Or in other words: the file descriptor will be closed, but it will not be
+free for reuse until the perl filehandle is closed.
 
 =cut
-
-sub aio_close($;$) {
-   aio_block {
-      my ($fh, $cb) = @_;
-
-      my $pri = aioreq_pri;
-      my $grp = aio_group $cb;
-
-      my $fd = fileno $fh;
-
-      defined $fd or Carp::croak "aio_close called with fd-less filehandle";
-
-      # if the dups fail we will simply get EBADF
-      my $fd2 = _dup $fd;
-      aioreq_pri $pri;
-      add $grp _aio_close $fd2, sub {
-         my $fd2 = _dup $fd;
-         close $fh;
-         aioreq_pri $pri;
-         add $grp _aio_close $fd2, sub {
-            $grp->result ($_[0]);
-         };
-      };
-
-      $grp
-   }
-}
-
 
 =item aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 

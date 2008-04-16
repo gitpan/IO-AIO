@@ -1180,11 +1180,37 @@ static void scandir_ (aio_req req, worker *self)
   req->result = res;
 }
 
+static int
+aio_close (int fd)
+{
+  static int close_pipe = -1; /* dummy fd to close fds via dup2 */
+
+  X_LOCK (wrklock);
+
+  if (close_pipe < 0)
+    {
+      int pipefd [2];
+
+      if (pipe (pipefd) < 0
+          || close (pipefd [1]) < 0
+          || fcntl (pipefd [0], F_SETFD, FD_CLOEXEC) < 0)
+        {
+          X_UNLOCK (wrklock);
+          return -1;
+        }
+
+      close_pipe = pipefd [0];
+    }
+
+  X_UNLOCK (wrklock);
+
+  return dup2 (close_pipe, fd) < 0 ? -1 : 0;
+}
+
 /*****************************************************************************/
 
 X_THREAD_PROC (aio_proc)
 {
-    {//D
   aio_req req;
   struct timespec ts;
   worker *self = (worker *)thr_arg;
@@ -1259,7 +1285,7 @@ X_THREAD_PROC (aio_proc)
             case REQ_FTRUNCATE: req->result = ftruncate (req->int1, req->offs); break;
 
             case REQ_OPEN:      req->result = open      (req->ptr1, req->int1, req->mode); break;
-            case REQ_CLOSE:     req->result = close     (req->int1); break;
+            case REQ_CLOSE:     req->result = aio_close (req->int1); break;
             case REQ_UNLINK:    req->result = unlink    (req->ptr1); break;
             case REQ_RMDIR:     req->result = rmdir     (req->ptr1); break;
             case REQ_MKDIR:     req->result = mkdir     (req->ptr1, req->mode); break;
@@ -1354,7 +1380,6 @@ quit:
   X_UNLOCK (wrklock);
 
   return 0;
-    }//D
 }
 
 /*****************************************************************************/
@@ -1538,23 +1563,15 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
         REQ_SEND (req);
 }
 
-int
-_dup (int fd)
-	PROTOTYPE: $
-        CODE:
-        RETVAL = dup (fd);
-	OUTPUT:
-        RETVAL
-
 void
-_aio_close (int fd, SV *callback=&PL_sv_undef)
+aio_close (SV *fh, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $;$
 	PPCODE:
 {
         dREQ;
 
         req->type = REQ_CLOSE;
-        req->int1 = fd;
+        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
 
         REQ_SEND (req);
 }

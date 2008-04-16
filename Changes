@@ -6,6 +6,17 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+2.61 Wed Apr 16 18:45:02 CEST 2008
+	- fix treescan output duplication and improve output ordering.
+          also display files given on the commandline.
+        - use a different algorithm for aio_close that is faster
+          and probably has even lower chances of blocking.
+        - do our own stack memory management for threads - linux
+          allocates outrageous amounts of VM (not so bad unless you
+          use mlockall...), which severely limits the number of threads
+          on 32-bit arches: stack size is the larger of PTHREAD_STACK_MIN
+          and 4096 * sizeof (long) (usually this is 16..64k).
+
 2.6  Sun Mar 30 08:28:11 CEST 2008
 	- added aio_sync.
         - added aio_pathsync.

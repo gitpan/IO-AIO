@@ -267,34 +267,14 @@ FUNCTIONS
 
         Unfortunately, you can't do this to perl. Perl *insists* very
         strongly on closing the file descriptor associated with the
-        filehandle itself. Here is what aio_close will try:
+        filehandle itself.
 
-           1. dup()licate the fd
-           2. asynchronously close() the duplicated fd
-           3. dup()licate the fd once more
-           4. let perl close() the filehandle
-           5. asynchronously close the duplicated fd
+        Therefore, "aio_close" will not close the filehandle - instead it
+        will use dup2 to overwrite the file descriptor with the write-end of
+        a pipe (the pipe fd will be created on demand and will be cached).
 
-        The idea is that the first close() flushes stuff to disk that
-        closing an fd will flush, so when perl closes the fd, nothing much
-        will need to be flushed. The second async. close() will then flush
-        stuff to disk that closing the last fd to the file will flush.
-
-        Just FYI, SuSv3 has this to say on close:
-
-           All outstanding record locks owned by the process on the file
-           associated with the file descriptor shall be removed.
-
-           If fildes refers to a socket, close() shall cause the socket to be
-           destroyed. ... close() shall block for up to the current linger
-           interval until all data is transmitted.
-           [this actually sounds like a specification bug, but who knows]
-
-        And at least Linux additionally actually flushes stuff on every
-        close, even when the file itself is still open.
-
-        Sounds enourmously inefficient and complicated? Yes... please show
-        me how to nuke perl's fd out of existence...
+        Or in other words: the file descriptor will be closed, but it will
+        not be free for reuse until the perl filehandle is closed.
 
     aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
     aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
