@@ -77,6 +77,13 @@ thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
 /* just in case */
 #define _REENTRANT 1
 
+#if __solaris
+/* try to bribe solaris headers into providing a current pthread API
+ * despite perl being configured for an older version.
+ */
+# define __EXTENSIONS__ 1
+#endif
+
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>

@@ -1571,6 +1571,7 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
         dREQ;
 
         req->type = REQ_CLOSE;
+        req->sv1  = newSVsv (fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
 
         REQ_SEND (req);
