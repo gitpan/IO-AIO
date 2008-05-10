@@ -1,4 +1,7 @@
-/* wether word reads are potentially non-atomic.
+#ifndef XTHREAD_H_
+#define XTHREAD_H_
+
+/* whether word reads are potentially non-atomic.
  * this is conservatice, likely most arches this runs
  * on have atomic word read/writes.
  */
@@ -67,9 +70,6 @@ thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
 #else
 /////////////////////////////////////////////////////////////////////////////
 
-/* solaris */
-#define _POSIX_PTHREAD_SEMANTICS 1
-
 #if __linux && !defined(_GNU_SOURCE)
 # define _GNU_SOURCE
 #endif
@@ -78,8 +78,9 @@ thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
 #define _REENTRANT 1
 
 #if __solaris
+# define _POSIX_PTHREAD_SEMANTICS 1
 /* try to bribe solaris headers into providing a current pthread API
- * despite perl being configured for an older version.
+ * despite environment being configured for an older version.
  */
 # define __EXTENSIONS__ 1
 #endif
@@ -139,5 +140,5 @@ thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
 
 #endif
 
-
+#endif
 

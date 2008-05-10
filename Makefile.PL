@@ -2,8 +2,6 @@ use ExtUtils::MakeMaker;
 
 use Config;
 
-require "autoconf.pm";
-
 if ($^O =~ /win32/i or $^O =~ /mswin/) {
 
    # configuration on windows is hardcoded - as always
@@ -34,8 +32,25 @@ want to try that.
 EOF
    }
 
-   autoconf::run_script()
-      and die "\nconfigure failed, check it's output above and autoconf/config.log\n\n";
+   {
+      local %ENV = %ENV;
+
+      while (my ($k, $v) = each %Config) {
+         $ENV{$k} = $v;
+      }
+
+      $ENV{MAKE}     = $Config{make};
+      $ENV{SHELL}    = $Config{sh};
+      $ENV{CC}       = $Config{cc};
+      $ENV{CPPFLAGS} = $Config{cppflags};
+      $ENV{CFLAGS}   = $Config{ccflags};
+      $ENV{LDFLAGS}  = $Config{ldflags};
+      $ENV{LIBS}     = $Config{libs};
+      $ENV{LINKER}   = $Config{ld}; # nonstandard
+
+      system $ENV{SHELL}, -c => "cd libeio && ./configure --prefix \Q$Config{prefixexp}\E"
+         and exit $? >> 8;
+   }
 }
 
 if ($^O =~ /linux/ && $Config{usemymalloc} eq "y") {
@@ -64,6 +79,9 @@ my $mm = MM->new({
        COMPRESS	=> 'gzip -9v',
        SUFFIX	=> '.gz',
 	            },
+    depend => {
+       "AIO.c" => "libeio/eio.h libeio/eio.c libeio/config.h",
+    },
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
     INC          => $INC,
@@ -71,7 +89,7 @@ my $mm = MM->new({
     PM           => {
     		    'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
                     },
-    clean        => { FILES => "autoconf/config.h autoconf/config.log autoconf/config.status" },
+    clean        => { FILES => "libeio/config.h libeio/config.log libeio/config.status" },
 });
 
 $mm->flush;

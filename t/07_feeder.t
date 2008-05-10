@@ -24,11 +24,11 @@ $grp->feed (sub {
    });
 });
 
-print $cn2 == 5 ? "" : "not ", "ok 2\n";
-print $cn3 == 0 ? "" : "not ", "ok 3\n";
+print $cn2 == 5 ? "" : "not ", "ok 2 # $cn2 == 5\n";
+print $cn3 == 0 ? "" : "not ", "ok 3 # $cn3 == 0\n";
 
 IO::AIO::poll while IO::AIO::nreqs;
 
-print $cn2 == 10 ? "" : "not ", "ok 5\n";
-print $cn3 == 10 ? "" : "not ", "ok 6\n";
+print $cn2 == 10 ? "" : "not ", "ok 5 # $cn2 == 10\n";
+print $cn3 == 10 ? "" : "not ", "ok 6 # $cn2 == 10\n";
 

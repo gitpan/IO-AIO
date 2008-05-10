@@ -6,6 +6,14 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.0  Sun May 11 00:57:14 CEST 2008
+	- added bin/treescan to the distribution.
+        - switched to using libeio.
+	- LOTS OF INCOMPATIBLE CHANGES:
+          - remove signal functionality, it is not worth the effort.
+          - max_outstanding no longer returns the previous number of requests.
+          - poll_cb no longer returns number of requests.
+
 2.62 Sat Apr 26 13:59:33 CEST 2008
 	- port to solaris perls configured for old posix
           (analysed by Jost Krieger).

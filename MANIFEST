@@ -5,7 +5,6 @@ Changes
 Makefile.PL
 AIO.pm
 AIO.xs
-xthread.h
 t/00_load.t
 t/01_stat.t
 t/02_read.t
@@ -15,10 +14,13 @@ t/05_readdir.t
 t/06_group.t
 t/07_feeder.t
 t/aio_test_common.pm
+
+libeio/xthread.h
+libeio/eio.h
+libeio/eio.c
+libeio/configure.ac
+libeio/config.h.in
+libeio/configure
+
 typemap
-genac
-autoconf.pm
-autoconf/configure.ac
-autoconf/configure
-autoconf/config.h.in
 META.yml                                 Module meta-data (added by MakeMaker)

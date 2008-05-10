@@ -26,9 +26,8 @@ SYNOPSIS
      my $grp = aio_group sub { print "all stats done\n" };
      add $grp aio_stat "..." for ...;
 
-     # AnyEvent integration (EV, Event, Glib, Tk, urxvt, pureperl...)
-     open my $fh, "<&=" . IO::AIO::poll_fileno or die "$!";
-     my $w = AnyEvent->io (fh => $fh, poll => 'r', cb => sub { IO::AIO::poll_cb });
+     # AnyEvent integration (EV, Event, Glib, Tk, POE, urxvt, pureperl...)
+     use AnyEvent::AIO;
 
      # EV integration
      my $w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
@@ -872,7 +871,7 @@ FUNCTIONS
         creation is fast. If thread creation is very slow on your system you
         might want to use larger values.
 
-    $oldmaxreqs = IO::AIO::max_outstanding $maxreqs
+    IO::AIO::max_outstanding $maxreqs
         This is a very bad function to use in interactive programs because
         it blocks, and a bad way to reduce concurrency because it is
         inexact: Better use an "aio_group" together with a feed callback.
@@ -886,7 +885,7 @@ FUNCTIONS
         the number of outstanding requests.
 
         You can still queue as many requests as you want. Therefore,
-        "max_oustsanding" is mainly useful in simple scripts (with low
+        "max_outstanding" is mainly useful in simple scripts (with low
         values) or as a stop gap to shield against fatal memory overflow
         (with large values).
 
@@ -946,7 +945,8 @@ KNOWN BUGS
     Known bugs will be fixed in the next release.
 
 SEE ALSO
-    Coro::AIO.
+    AnyEvent::AIO for easy integration into event loops, Coro::AIO for a
+    more natural syntax.
 
 AUTHOR
      Marc Lehmann <schmorp@schmorp.de>

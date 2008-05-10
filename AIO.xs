@@ -1,4 +1,4 @@
-#include "xthread.h"
+#include "libeio/xthread.h"
 
 #include <errno.h>
 
@@ -17,10 +17,9 @@
 
 #ifdef _WIN32
 
-# define SIGIO 0
-  typedef Direntry_t X_DIRENT;
-#undef malloc
-#undef free
+# define EIO_STRUCT_DIRENT Direntry_t
+# undef malloc
+# undef free
 
 // perl overrides all those nice win32 functions
 # undef open
@@ -56,41 +55,16 @@
 
 #else
 
-# include "autoconf/config.h"
 # include <sys/time.h>
 # include <sys/select.h>
 # include <unistd.h>
 # include <utime.h>
 # include <signal.h>
-  typedef struct dirent X_DIRENT;
+# define EIO_STRUCT_DIRENT struct dirent
 
 #endif
 
-#if HAVE_SENDFILE
-# if __linux
-#  include <sys/sendfile.h>
-# elif __freebsd
-#  include <sys/socket.h>
-#  include <sys/uio.h>
-# elif __hpux
-#  include <sys/socket.h>
-# elif __solaris /* not yet */
-#  include <sys/sendfile.h>
-# else
-#  error sendfile support requested but not available
-# endif
-#endif
-
-/* number of seconds after which idle threads exit */
-#define IDLE_TIMEOUT 10
-
-/* used for struct dirent, AIX doesn't provide it */
-#ifndef NAME_MAX
-# define NAME_MAX 4096
-#endif
-
-/* buffer size for various temporary buffers */
-#define AIO_BUFSIZE 65536
+#define EIO_STRUCT_STAT Stat_t
 
 /* use NV for 32 bit perls as it allows larger offsets */
 #if IVSIZE >= 8
@@ -100,281 +74,57 @@
 #endif
 
 static HV *stash;
-
-#define dBUF	 				\
-  char *aio_buf;				\
-  X_LOCK (wrklock);				\
-  self->dbuf = aio_buf = malloc (AIO_BUFSIZE);	\
-  X_UNLOCK (wrklock);				\
-  if (!aio_buf)					\
-    return -1;
-
 typedef SV SV8; /* byte-sv, used for argument-checking */
-
-enum {
-  REQ_QUIT,
-  REQ_OPEN, REQ_CLOSE,
-  REQ_READ, REQ_WRITE,
-  REQ_READAHEAD, REQ_SENDFILE,
-  REQ_STAT, REQ_LSTAT, REQ_FSTAT,
-  REQ_TRUNCATE, REQ_FTRUNCATE,
-  REQ_UTIME, REQ_FUTIME,
-  REQ_CHMOD, REQ_FCHMOD,
-  REQ_CHOWN, REQ_FCHOWN,
-  REQ_SYNC, REQ_FSYNC, REQ_FDATASYNC,
-  REQ_UNLINK, REQ_RMDIR, REQ_MKDIR, REQ_RENAME,
-  REQ_MKNOD, REQ_READDIR,
-  REQ_LINK, REQ_SYMLINK, REQ_READLINK,
-  REQ_GROUP, REQ_NOP,
-  REQ_BUSY,
-};
 
 #define AIO_REQ_KLASS "IO::AIO::REQ"
 #define AIO_GRP_KLASS "IO::AIO::GRP"
 
-typedef struct aio_cb
-{
-  struct aio_cb *volatile next;
+#define EIO_COMMON	\
+  SV *callback;		\
+  SV *sv1, *sv2;	\
+  STRLEN stroffset;	\
+  SV *self
 
-  SV *callback;
-  SV *sv1, *sv2;
-  void *ptr1, *ptr2;
-  off_t offs;
-  size_t size;
-  ssize_t result;
-  double nv1, nv2;
+#include "libeio/eio.h"
 
-  STRLEN stroffset;
-  int type;
-  int int1, int2, int3;
-  int errorno;
-  mode_t mode; /* open */
-
-  unsigned char flags;
-  unsigned char pri;
-
-  SV *self; /* the perl counterpart of this request, if any */
-  struct aio_cb *grp, *grp_prev, *grp_next, *grp_first;
-} aio_cb;
+static int req_invoke    (eio_req *req);
+#define EIO_FINISH(req)  req_invoke (req)
+static void aio_grp_feed (eio_req *grp);
+#define EIO_FEED(req)    aio_grp_feed (req)
+static void req_destroy  (eio_req *grp);
+#define EIO_DESTROY(req) req_destroy (req)
 
 enum {
-  FLAG_CANCELLED     = 0x01, /* request was cancelled */
-  FLAG_SV2_RO_OFF    = 0x40, /* data was set readonly */
-  FLAG_PTR2_FREE     = 0x80, /* need to free(ptr2) */
+  FLAG_SV2_RO_OFF = 0x40, /* data was set readonly */
 };
 
-typedef aio_cb *aio_req;
-typedef aio_cb *aio_req_ornot;
+#include "libeio/eio.c"
 
-enum {
-  PRI_MIN     = -4,
-  PRI_MAX     =  4,
+typedef eio_req *aio_req;
+typedef eio_req *aio_req_ornot;
 
-  DEFAULT_PRI = 0,
-  PRI_BIAS    = -PRI_MIN,
-  NUM_PRI     = PRI_MAX + PRI_BIAS + 1,
-};
+static SV *on_next_submit;
+static int next_pri = EIO_DEFAULT_PRI + EIO_PRI_BIAS;
+static int max_outstanding;
 
-#define AIO_TICKS ((1000000 + 1023) >> 10)
-
-static unsigned int max_poll_time = 0;
-static unsigned int max_poll_reqs = 0;
-
-/* calculcate time difference in ~1/AIO_TICKS of a second */
-static int tvdiff (struct timeval *tv1, struct timeval *tv2)
-{
-  return  (tv2->tv_sec  - tv1->tv_sec ) * AIO_TICKS
-       + ((tv2->tv_usec - tv1->tv_usec) >> 10);
-}
-
-static thread_t main_tid;
-static int main_sig;
-static int block_sig_level;
-
-void block_sig (void)
-{
-  sigset_t ss;
-
-  if (block_sig_level++)
-    return;
-
-  if (!main_sig)
-    return;
-
-  sigemptyset (&ss);
-  sigaddset (&ss, main_sig);
-  pthread_sigmask (SIG_BLOCK, &ss, 0);
-}
-
-void unblock_sig (void)
-{
-  sigset_t ss;
-
-  if (--block_sig_level)
-    return;
-
-  if (!main_sig)
-    return;
-
-  sigemptyset (&ss);
-  sigaddset (&ss, main_sig);
-  pthread_sigmask (SIG_UNBLOCK, &ss, 0);
-}
-
-static int next_pri = DEFAULT_PRI + PRI_BIAS;
-
-static unsigned int started, idle, wanted;
-
-/* worker threads management */
-static mutex_t wrklock = X_MUTEX_INIT;
-
-typedef struct worker {
-  /* locked by wrklock */
-  struct worker *prev, *next;
-
-  thread_t tid;
-
-  /* locked by reslock, reqlock or wrklock */
-  aio_req req; /* currently processed request */
-  void *dbuf;
-  DIR *dirp;
-} worker;
-
-static worker wrk_first = { &wrk_first, &wrk_first, 0 };
-
-static void worker_clear (worker *wrk)
-{
-  if (wrk->dirp)
-    {
-      closedir (wrk->dirp);
-      wrk->dirp = 0;
-    }
-
-  if (wrk->dbuf)
-    {
-      free (wrk->dbuf);
-      wrk->dbuf = 0;
-    }
-}
-
-static void worker_free (worker *wrk)
-{
-  wrk->next->prev = wrk->prev;
-  wrk->prev->next = wrk->next;
-
-  free (wrk);
-}
-
-static volatile unsigned int nreqs, nready, npending;
-static volatile unsigned int max_idle = 4;
-static volatile unsigned int max_outstanding = 0xffffffff;
 static int respipe_osf [2], respipe [2] = { -1, -1 };
 
-static mutex_t reslock = X_MUTEX_INIT;
-static mutex_t reqlock = X_MUTEX_INIT;
-static cond_t  reqwait = X_COND_INIT;
-
-#if WORDACCESS_UNSAFE
-
-static unsigned int get_nready (void)
-{
-  unsigned int retval;
-
-  X_LOCK   (reqlock);
-  retval = nready;
-  X_UNLOCK (reqlock);
-
-  return retval;
-}
-
-static unsigned int get_npending (void)
-{
-  unsigned int retval;
-
-  X_LOCK   (reslock);
-  retval = npending;
-  X_UNLOCK (reslock);
-
-  return retval;
-}
-
-static unsigned int get_nthreads (void)
-{
-  unsigned int retval;
-
-  X_LOCK   (wrklock);
-  retval = started;
-  X_UNLOCK (wrklock);
-
-  return retval;
-}
-
-#else
-
-# define get_nready()   nready
-# define get_npending() npending
-# define get_nthreads() started
-
-#endif
-
-/*
- * a somewhat faster data structure might be nice, but
- * with 8 priorities this actually needs <20 insns
- * per shift, the most expensive operation.
- */
-typedef struct {
-  aio_req qs[NUM_PRI], qe[NUM_PRI]; /* qstart, qend */
-  int size;
-} reqq;
-
-static reqq req_queue;
-static reqq res_queue;
-
-int reqq_push (reqq *q, aio_req req)
-{
-  int pri = req->pri;
-  req->next = 0;
-
-  if (q->qe[pri])
-    {
-      q->qe[pri]->next = req;
-      q->qe[pri] = req;
-    }
-  else
-    q->qe[pri] = q->qs[pri] = req;
-
-  return q->size++;
-}
-
-aio_req reqq_shift (reqq *q)
-{
-  int pri;
-
-  if (!q->size)
-    return 0;
-
-  --q->size;
-
-  for (pri = NUM_PRI; pri--; )
-    {
-      aio_req req = q->qs[pri];
-
-      if (req)
-        {
-          if (!(q->qs[pri] = req->next))
-            q->qe[pri] = 0;
-
-          return req;
-        }
-    }
-
-  abort ();
-}
-
-static int poll_cb (void);
-static int req_invoke (aio_req req);
 static void req_destroy (aio_req req);
 static void req_cancel (aio_req req);
+
+static void want_poll (void)
+{
+  /* write a dummy byte to the pipe so fh becomes ready */
+  respipe_write (respipe_osf [1], (const void *)&respipe_osf, 1);
+}
+
+static void done_poll (void)
+{
+  /* read any signals sent by the worker threads */
+  char buf [4];
+  while (respipe_read (respipe [0], buf, 4) == 4)
+    ;
+}
 
 /* must be called at most once */
 static SV *req_sv (aio_req req, const char *klass)
@@ -402,71 +152,47 @@ static aio_req SvAIO_REQ (SV *sv)
 
 static void aio_grp_feed (aio_req grp)
 {
-  block_sig ();
-
-  while (grp->size < grp->int2 && !(grp->flags & FLAG_CANCELLED))
+  if (grp->sv2 && SvOK (grp->sv2))
     {
-      int old_len = grp->size;
+      dSP;
 
-      if (grp->sv2 && SvOK (grp->sv2))
-        {
-          dSP;
-
-          ENTER;
-          SAVETMPS;
-          PUSHMARK (SP);
-          XPUSHs (req_sv (grp, AIO_GRP_KLASS));
-          PUTBACK;
-          call_sv (grp->sv2, G_VOID | G_EVAL | G_KEEPERR);
-          SPAGAIN;
-          FREETMPS;
-          LEAVE;
-        }
-
-      /* stop if no progress has been made */
-      if (old_len == grp->size)
-        {
-          SvREFCNT_dec (grp->sv2);
-          grp->sv2 = 0;
-          break;
-        }
+      ENTER;
+      SAVETMPS;
+      PUSHMARK (SP);
+      XPUSHs (req_sv (grp, AIO_GRP_KLASS));
+      PUTBACK;
+      call_sv (grp->sv2, G_VOID | G_EVAL | G_KEEPERR);
+      SPAGAIN;
+      FREETMPS;
+      LEAVE;
     }
-
-  unblock_sig ();
 }
 
-static void aio_grp_dec (aio_req grp)
+static void req_submit (eio_req *req)
 {
-  --grp->size;
+  eio_submit (req);
 
-  /* call feeder, if applicable */
-  aio_grp_feed (grp);
-
-  /* finish, if done */
-  if (!grp->size && grp->int1)
+  if (on_next_submit)
     {
-      block_sig ();
+      dSP;
+      SV *cb = sv_2mortal (on_next_submit);
 
-      if (!req_invoke (grp))
-        {
-          req_destroy (grp);
-          unblock_sig ();
-          croak (0);
-        }
+      on_next_submit = 0;
 
-      req_destroy (grp);
-      unblock_sig ();
+      PUSHMARK (SP);
+      PUTBACK;
+      call_sv (cb, G_DISCARD | G_EVAL);
     }
 }
 
-static int req_invoke (aio_req req)
+static int req_invoke (eio_req *req)
 {
   dSP;
 
   if (req->flags & FLAG_SV2_RO_OFF)
     SvREADONLY_off (req->sv2);
 
-  if (!(req->flags & FLAG_CANCELLED) && SvOK (req->callback))
+  if (!EIO_CANCELLED (req) && SvOK (req->callback))
     {
       ENTER;
       SAVETMPS;
@@ -475,7 +201,7 @@ static int req_invoke (aio_req req)
 
       switch (req->type)
         {
-          case REQ_READDIR:
+          case EIO_READDIR:
             {
               SV *rv = &PL_sv_undef;
 
@@ -502,7 +228,7 @@ static int req_invoke (aio_req req)
             }
             break;
 
-          case REQ_OPEN:
+          case EIO_OPEN:
             {
               /* convert fd to fh */
               SV *fh = &PL_sv_undef;
@@ -533,7 +259,7 @@ static int req_invoke (aio_req req)
             }
             break;
 
-          case REQ_GROUP:
+          case EIO_GROUP:
             req->int1 = 2; /* mark group as finished */
 
             if (req->sv1)
@@ -547,11 +273,11 @@ static int req_invoke (aio_req req)
               }
             break;
 
-          case REQ_NOP:
-          case REQ_BUSY:
+          case EIO_NOP:
+          case EIO_BUSY:
             break;
 
-          case REQ_READLINK:
+          case EIO_READLINK:
             if (req->result > 0)
               {
                 SvCUR_set (req->sv2, req->result);
@@ -560,20 +286,25 @@ static int req_invoke (aio_req req)
               }
             break;
 
-          case REQ_STAT:
-          case REQ_LSTAT:
-          case REQ_FSTAT:
-            PL_laststype   = req->type == REQ_LSTAT ? OP_LSTAT : OP_STAT;
+          case EIO_STAT:
+          case EIO_LSTAT:
+          case EIO_FSTAT:
+            PL_laststype   = req->type == EIO_LSTAT ? OP_LSTAT : OP_STAT;
             PL_laststatval = req->result;
-            PL_statcache   = *(Stat_t *)(req->ptr2);
+            PL_statcache   = *(EIO_STRUCT_STAT *)(req->ptr2);
             PUSHs (sv_2mortal (newSViv (req->result)));
             break;
 
-          case REQ_READ:
+          case EIO_READ:
             SvCUR_set (req->sv2, req->stroffset + (req->result > 0 ? req->result : 0));
             *SvEND (req->sv2) = 0;
             PUSHs (sv_2mortal (newSViv (req->result)));
             break;
+
+          case EIO_DUP2:
+            if (req->result > 0)
+              req->result = 0;
+            /* FALLTHROUGH */
 
           default:
             PUSHs (sv_2mortal (newSViv (req->result)));
@@ -592,21 +323,7 @@ static int req_invoke (aio_req req)
       PUTBACK;
     }
 
-  if (req->grp)
-    {
-      aio_req grp = req->grp;
-
-      /* unlink request */
-      if (req->grp_next) req->grp_next->grp_prev = req->grp_prev;
-      if (req->grp_prev) req->grp_prev->grp_next = req->grp_next;
-
-      if (grp->grp_first == req)
-        grp->grp_first = req->grp_next;
-
-      aio_grp_dec (grp);
-    }
-
-  return !SvTRUE (ERRSV);
+  return !!SvTRUE (ERRSV);
 }
 
 static void req_destroy (aio_req req)
@@ -621,9 +338,6 @@ static void req_destroy (aio_req req)
   SvREFCNT_dec (req->sv2);
   SvREFCNT_dec (req->callback);
 
-  if (req->flags & FLAG_PTR2_FREE)
-    free (req->ptr2);
-
   Safefree (req);
 }
 
@@ -631,21 +345,13 @@ static void req_cancel_subs (aio_req grp)
 {
   aio_req sub;
 
-  if (grp->type != REQ_GROUP)
+  if (grp->type != EIO_GROUP)
     return;
 
   SvREFCNT_dec (grp->sv2);
   grp->sv2 = 0;
 
-  for (sub = grp->grp_first; sub; sub = sub->grp_next)
-    req_cancel (sub);
-}
-
-static void req_cancel (aio_req req)
-{
-  req->flags |= FLAG_CANCELLED;
-
-  req_cancel_subs (req);
+  eio_grp_cancel (grp);
 }
 
 #ifdef USE_SOCKETS_AS_HANDLES
@@ -692,111 +398,17 @@ create_respipe (void)
   respipe_osf [1] = TO_SOCKET (respipe [1]);
 }
 
-X_THREAD_PROC (aio_proc);
-
-static void start_thread (void)
-{
-  worker *wrk = calloc (1, sizeof (worker));
-
-  if (!wrk)
-    croak ("unable to allocate worker thread data");
-
-  X_LOCK (wrklock);
-
-  if (thread_create (&wrk->tid, aio_proc, (void *)wrk))
-    {
-      wrk->prev = &wrk_first;
-      wrk->next = wrk_first.next;
-      wrk_first.next->prev = wrk;
-      wrk_first.next = wrk;
-      ++started;
-    }
-  else
-    free (wrk);
-
-  X_UNLOCK (wrklock);
-}
-
-static void maybe_start_thread (void)
-{
-  if (get_nthreads () >= wanted)
-    return;
-  
-  /* todo: maybe use idle here, but might be less exact */
-  if (0 <= (int)get_nthreads () + (int)get_npending () - (int)nreqs)
-    return;
-
-  start_thread ();
-}
-
-static void req_send (aio_req req)
-{
-  block_sig ();
-
-  ++nreqs;
-
-  X_LOCK (reqlock);
-  ++nready;
-  reqq_push (&req_queue, req);
-  X_COND_SIGNAL (reqwait);
-  X_UNLOCK (reqlock);
-
-  unblock_sig ();
-
-  maybe_start_thread ();
-}
-
-static void end_thread (void)
-{
-  aio_req req;
-
-  Newz (0, req, 1, aio_cb);
-
-  req->type = REQ_QUIT;
-  req->pri  = PRI_MAX + PRI_BIAS;
-
-  X_LOCK (reqlock);
-  reqq_push (&req_queue, req);
-  X_COND_SIGNAL (reqwait);
-  X_UNLOCK (reqlock);
-
-  X_LOCK (wrklock);
-  --started;
-  X_UNLOCK (wrklock);
-}
-
-static void set_max_idle (int nthreads)
-{
-  if (WORDACCESS_UNSAFE) X_LOCK   (reqlock);
-  max_idle = nthreads <= 0 ? 1 : nthreads;
-  if (WORDACCESS_UNSAFE) X_UNLOCK (reqlock);
-}
-
-static void min_parallel (int nthreads)
-{
-  if (wanted < nthreads)
-    wanted = nthreads;
-}
-
-static void max_parallel (int nthreads)
-{
-  if (wanted > nthreads)
-    wanted = nthreads;
-
-  while (started > wanted)
-    end_thread ();
-}
-
 static void poll_wait (void)
 {
   fd_set rfd;
 
-  while (nreqs)
+  while (eio_nreqs ())
     {
       int size;
-      if (WORDACCESS_UNSAFE) X_LOCK   (reslock);
+
+      X_LOCK   (reslock);
       size = res_queue.size;
-      if (WORDACCESS_UNSAFE) X_UNLOCK (reslock);
+      X_UNLOCK (reslock);
 
       if (size)
         return;
@@ -812,653 +424,42 @@ static void poll_wait (void)
 
 static int poll_cb (void)
 {
-  dSP;
-  int count = 0;
-  int maxreqs = max_poll_reqs;
-  int do_croak = 0;
-  struct timeval tv_start, tv_now;
-  aio_req req;
+  int res;
 
-  if (max_poll_time)
-    gettimeofday (&tv_start, 0);
-
-  block_sig ();
-
-  for (;;)
+  do 
     {
-      for (;;)
-        {
-          maybe_start_thread ();
+      res = eio_poll ();
 
-          X_LOCK (reslock);
-          req = reqq_shift (&res_queue);
-
-          if (req)
-            {
-              --npending;
-
-              if (!res_queue.size)
-                {
-                  /* read any signals sent by the worker threads */
-                  char buf [4];
-                  while (respipe_read (respipe [0], buf, 4) == 4)
-                    ;
-                }
-            }
-
-          X_UNLOCK (reslock);
-
-          if (!req)
-            break;
-
-          --nreqs;
-
-          if (req->type == REQ_GROUP && req->size)
-            {
-              req->int1 = 1; /* mark request as delayed */
-              continue;
-            }
-          else
-            {
-              if (!req_invoke (req))
-                {
-                  req_destroy (req);
-                  unblock_sig ();
-                  croak (0);
-                }
-
-              count++;
-            }
-
-          req_destroy (req);
-
-          if (maxreqs && !--maxreqs)
-            break;
-
-          if (max_poll_time)
-            {
-              gettimeofday (&tv_now, 0);
-
-              if (tvdiff (&tv_start, &tv_now) >= max_poll_time)
-                break;
-            }
-        }
-
-      if (nreqs <= max_outstanding)
-        break;
-
-      poll_wait ();
-
-      ++maxreqs;
+      if (res > 0)
+        croak (0);
     }
-
-  unblock_sig ();
-  return count;
-}
-
-/*****************************************************************************/
-/* work around various missing functions */
-
-#if !HAVE_PREADWRITE
-# define pread  aio_pread
-# define pwrite aio_pwrite
-
-/*
- * make our pread/pwrite safe against themselves, but not against
- * normal read/write by using a mutex. slows down execution a lot,
- * but that's your problem, not mine.
- */
-static mutex_t preadwritelock = X_MUTEX_INIT;
-
-static ssize_t pread (int fd, void *buf, size_t count, off_t offset)
-{
-  ssize_t res;
-  off_t ooffset;
-
-  X_LOCK (preadwritelock);
-  ooffset = lseek (fd, 0, SEEK_CUR);
-  lseek (fd, offset, SEEK_SET);
-  res = read (fd, buf, count);
-  lseek (fd, ooffset, SEEK_SET);
-  X_UNLOCK (preadwritelock);
+  while (max_outstanding && max_outstanding <= eio_nreqs ());
 
   return res;
-}
-
-static ssize_t pwrite (int fd, void *buf, size_t count, off_t offset)
-{
-  ssize_t res;
-  off_t ooffset;
-
-  X_LOCK (preadwritelock);
-  ooffset = lseek (fd, 0, SEEK_CUR);
-  lseek (fd, offset, SEEK_SET);
-  res = write (fd, buf, count);
-  lseek (fd, offset, SEEK_SET);
-  X_UNLOCK (preadwritelock);
-
-  return res;
-}
-#endif
-
-#ifndef HAVE_FUTIMES
-
-# define utimes(path,times)  aio_utimes  (path, times)
-# define futimes(fd,times)   aio_futimes (fd, times)
-
-int aio_utimes (const char *filename, const struct timeval times[2])
-{
-  if (times)
-    {
-      struct utimbuf buf;
-
-      buf.actime  = times[0].tv_sec;
-      buf.modtime = times[1].tv_sec;
-
-      return utime (filename, &buf);
-    }
-  else
-    return utime (filename, 0);
-}
-
-int aio_futimes (int fd, const struct timeval tv[2])
-{
-  errno = ENOSYS;
-  return -1;
-}
-
-#endif
-
-#if !HAVE_FDATASYNC
-# define fdatasync fsync
-#endif
-
-#if !HAVE_READAHEAD
-# define readahead(fd,offset,count) aio_readahead (fd, offset, count, self)
-
-static ssize_t aio_readahead (int fd, off_t offset, size_t count, worker *self)
-{
-  size_t todo = count;
-  dBUF;
-
-  while (todo > 0)
-    {
-      size_t len = todo < AIO_BUFSIZE ? todo : AIO_BUFSIZE;
-
-      pread (fd, aio_buf, len, offset);
-      offset += len;
-      todo   -= len;
-    }
-
-  errno = 0;
-  return count;
-}
-
-#endif
-
-#if !HAVE_READDIR_R
-# define readdir_r aio_readdir_r
-
-static mutex_t readdirlock = X_MUTEX_INIT;
-  
-static int readdir_r (DIR *dirp, X_DIRENT *ent, X_DIRENT **res)
-{
-  X_DIRENT *e;
-  int errorno;
-
-  X_LOCK (readdirlock);
-
-  e = readdir (dirp);
-  errorno = errno;
-
-  if (e)
-    {
-      *res = ent;
-      strcpy (ent->d_name, e->d_name);
-    }
-  else
-    *res = 0;
-
-  X_UNLOCK (readdirlock);
-
-  errno = errorno;
-  return e ? 0 : -1;
-}
-#endif
-
-/* sendfile always needs emulation */
-static ssize_t sendfile_ (int ofd, int ifd, off_t offset, size_t count, worker *self)
-{
-  ssize_t res;
-
-  if (!count)
-    return 0;
-
-#if HAVE_SENDFILE
-# if __linux
-  res = sendfile (ofd, ifd, &offset, count);
-
-# elif __freebsd
-  /*
-   * Of course, the freebsd sendfile is a dire hack with no thoughts
-   * wasted on making it similar to other I/O functions.
-   */
-  {
-    off_t sbytes;
-    res = sendfile (ifd, ofd, offset, count, 0, &sbytes, 0);
-
-    if (res < 0 && sbytes)
-      /* maybe only on EAGAIN: as usual, the manpage leaves you guessing */
-      res = sbytes;
-  }
-
-# elif __hpux
-  res = sendfile (ofd, ifd, offset, count, 0, 0);
-
-# elif __solaris
-  {
-    struct sendfilevec vec;
-    size_t sbytes;
-
-    vec.sfv_fd   = ifd;
-    vec.sfv_flag = 0;
-    vec.sfv_off  = offset;
-    vec.sfv_len  = count;
-
-    res = sendfilev (ofd, &vec, 1, &sbytes);
-
-    if (res < 0 && sbytes)
-      res = sbytes;
-  }
-
-# endif
-#else
-  res = -1;
-  errno = ENOSYS;
-#endif
-
-  if (res <  0
-      && (errno == ENOSYS || errno == EINVAL || errno == ENOTSOCK
-#if __solaris
-          || errno == EAFNOSUPPORT || errno == EPROTOTYPE
-#endif
-         )
-      )
-    {
-      /* emulate sendfile. this is a major pain in the ass */
-      dBUF;
-
-      res = 0;
-
-      while (count)
-        {
-          ssize_t cnt;
-          
-          cnt = pread (ifd, aio_buf, count > AIO_BUFSIZE ? AIO_BUFSIZE : count, offset);
-
-          if (cnt <= 0)
-            {
-              if (cnt && !res) res = -1;
-              break;
-            }
-
-          cnt = write (ofd, aio_buf, cnt);
-
-          if (cnt <= 0)
-            {
-              if (cnt && !res) res = -1;
-              break;
-            }
-
-          offset += cnt;
-          res    += cnt;
-          count  -= cnt;
-        }
-    }
-
-  return res;
-}
-
-/* read a full directory */
-static void scandir_ (aio_req req, worker *self)
-{
-  DIR *dirp;
-  union
-  {    
-    X_DIRENT d;
-    char b [offsetof (X_DIRENT, d_name) + NAME_MAX + 1];
-  } *u;
-  X_DIRENT *entp;
-  char *name, *names;
-  int memlen = 4096;
-  int memofs = 0;
-  int res = 0;
-
-  X_LOCK (wrklock);
-  self->dirp = dirp = opendir (req->ptr1);
-  self->dbuf = u = malloc (sizeof (*u));
-  req->flags |= FLAG_PTR2_FREE;
-  req->ptr2 = names = malloc (memlen);
-  X_UNLOCK (wrklock);
-
-  if (dirp && u && names)
-    for (;;)
-      {
-        errno = 0;
-        readdir_r (dirp, &u->d, &entp);
-
-        if (!entp)
-          break;
-
-        name = entp->d_name;
-
-        if (name [0] != '.' || (name [1] && (name [1] != '.' || name [2])))
-          {
-            int len = strlen (name) + 1;
-
-            res++;
-
-            while (memofs + len > memlen)
-              {
-                memlen *= 2;
-                X_LOCK (wrklock);
-                req->ptr2 = names = realloc (names, memlen);
-                X_UNLOCK (wrklock);
-
-                if (!names)
-                  break;
-              }
-
-            memcpy (names + memofs, name, len);
-            memofs += len;
-          }
-      }
-
-  if (errno)
-    res = -1;
-  
-  req->result = res;
-}
-
-static int
-aio_close (int fd)
-{
-  static int close_pipe = -1; /* dummy fd to close fds via dup2 */
-
-  X_LOCK (wrklock);
-
-  if (close_pipe < 0)
-    {
-      int pipefd [2];
-
-      if (pipe (pipefd) < 0
-          || close (pipefd [1]) < 0
-          || fcntl (pipefd [0], F_SETFD, FD_CLOEXEC) < 0)
-        {
-          X_UNLOCK (wrklock);
-          return -1;
-        }
-
-      close_pipe = pipefd [0];
-    }
-
-  X_UNLOCK (wrklock);
-
-  return dup2 (close_pipe, fd) < 0 ? -1 : 0;
-}
-
-/*****************************************************************************/
-
-X_THREAD_PROC (aio_proc)
-{
-  aio_req req;
-  struct timespec ts;
-  worker *self = (worker *)thr_arg;
-
-  /* try to distribute timeouts somewhat randomly */
-  ts.tv_nsec = ((unsigned long)self & 1023UL) * (1000000000UL / 1024UL);
-
-  for (;;)
-    {
-      ts.tv_sec  = time (0) + IDLE_TIMEOUT;
-
-      X_LOCK (reqlock);
-
-      for (;;)
-        {
-          self->req = req = reqq_shift (&req_queue);
-
-          if (req)
-            break;
-
-          ++idle;
-
-          if (X_COND_TIMEDWAIT (reqwait, reqlock, ts)
-              == ETIMEDOUT)
-            {
-              if (idle > max_idle)
-                {
-                  --idle;
-                  X_UNLOCK (reqlock);
-                  X_LOCK (wrklock);
-                  --started;
-                  X_UNLOCK (wrklock);
-                  goto quit;
-                }
-
-              /* we are allowed to idle, so do so without any timeout */
-              X_COND_WAIT (reqwait, reqlock);
-              ts.tv_sec  = time (0) + IDLE_TIMEOUT;
-            }
-
-          --idle;
-        }
-
-      --nready;
-
-      X_UNLOCK (reqlock);
-     
-      errno = 0; /* strictly unnecessary */
-
-      if (!(req->flags & FLAG_CANCELLED))
-        switch (req->type)
-          {
-            case REQ_READ:      req->result = req->offs >= 0
-                                            ? pread     (req->int1, req->ptr1, req->size, req->offs)
-                                            : read      (req->int1, req->ptr1, req->size); break;
-            case REQ_WRITE:     req->result = req->offs >= 0
-                                            ? pwrite    (req->int1, req->ptr1, req->size, req->offs)
-                                            : write     (req->int1, req->ptr1, req->size); break;
-
-            case REQ_READAHEAD: req->result = readahead (req->int1, req->offs, req->size); break;
-            case REQ_SENDFILE:  req->result = sendfile_ (req->int1, req->int2, req->offs, req->size, self); break;
-
-            case REQ_STAT:      req->result = stat      (req->ptr1, (Stat_t *)req->ptr2); break;
-            case REQ_LSTAT:     req->result = lstat     (req->ptr1, (Stat_t *)req->ptr2); break;
-            case REQ_FSTAT:     req->result = fstat     (req->int1, (Stat_t *)req->ptr2); break;
-
-            case REQ_CHOWN:     req->result = chown     (req->ptr1, req->int2, req->int3); break;
-            case REQ_FCHOWN:    req->result = fchown    (req->int1, req->int2, req->int3); break;
-            case REQ_CHMOD:     req->result = chmod     (req->ptr1, req->mode); break;
-            case REQ_FCHMOD:    req->result = fchmod    (req->int1, req->mode); break;
-            case REQ_TRUNCATE:  req->result = truncate  (req->ptr1, req->offs); break;
-            case REQ_FTRUNCATE: req->result = ftruncate (req->int1, req->offs); break;
-
-            case REQ_OPEN:      req->result = open      (req->ptr1, req->int1, req->mode); break;
-            case REQ_CLOSE:     req->result = aio_close (req->int1); break;
-            case REQ_UNLINK:    req->result = unlink    (req->ptr1); break;
-            case REQ_RMDIR:     req->result = rmdir     (req->ptr1); break;
-            case REQ_MKDIR:     req->result = mkdir     (req->ptr1, req->mode); break;
-            case REQ_RENAME:    req->result = rename    (req->ptr2, req->ptr1); break;
-            case REQ_LINK:      req->result = link      (req->ptr2, req->ptr1); break;
-            case REQ_SYMLINK:   req->result = symlink   (req->ptr2, req->ptr1); break;
-            case REQ_MKNOD:     req->result = mknod     (req->ptr2, req->mode, (dev_t)req->offs); break;
-            case REQ_READLINK:  req->result = readlink  (req->ptr2, req->ptr1, NAME_MAX); break;
-
-            case REQ_SYNC:      req->result = 0; sync (); break;
-            case REQ_FSYNC:     req->result = fsync     (req->int1); break;
-            case REQ_FDATASYNC: req->result = fdatasync (req->int1); break;
-
-            case REQ_READDIR:   scandir_ (req, self); break;
-
-            case REQ_BUSY:
-#ifdef _WIN32
-	      Sleep (req->nv1 * 1000.);
-#else
-              {
-                struct timeval tv;
-
-                tv.tv_sec  = req->nv1;
-                tv.tv_usec = (req->nv1 - tv.tv_sec) * 1000000.;
-
-                req->result = select (0, 0, 0, 0, &tv);
-              }
-#endif
-              break;
-
-            case REQ_UTIME:
-            case REQ_FUTIME:
-              {
-                struct timeval tv[2];
-                struct timeval *times;
-
-                if (req->nv1 != -1. || req->nv2 != -1.)
-                  {
-                    tv[0].tv_sec  = req->nv1;
-                    tv[0].tv_usec = (req->nv1 - tv[0].tv_sec) * 1000000.;
-                    tv[1].tv_sec  = req->nv2;
-                    tv[1].tv_usec = (req->nv2 - tv[1].tv_sec) * 1000000.;
-
-                    times = tv;
-                  }
-                else
-                  times = 0;
-
-
-                req->result = req->type == REQ_FUTIME
-                              ? futimes (req->int1, times)
-                              : utimes  (req->ptr1, times);
-              }
-
-            case REQ_GROUP:
-            case REQ_NOP:
-              break;
-
-            case REQ_QUIT:
-              goto quit;
-
-            default:
-              req->result = -1;
-              break;
-          }
-
-      req->errorno = errno;
-
-      X_LOCK (reslock);
-
-      ++npending;
-
-      if (!reqq_push (&res_queue, req))
-        {
-          /* write a dummy byte to the pipe so fh becomes ready */
-          respipe_write (respipe_osf [1], (const void *)&respipe_osf, 1);
-
-          /* optionally signal the main thread asynchronously */
-          if (main_sig)
-            pthread_kill (main_tid, main_sig);
-        }
-
-      self->req = 0;
-      worker_clear (self);
-
-      X_UNLOCK (reslock);
-    }
-
-quit:
-  X_LOCK (wrklock);
-  worker_free (self);
-  X_UNLOCK (wrklock);
-
-  return 0;
-}
-
-/*****************************************************************************/
-
-static void atfork_prepare (void)
-{
-  X_LOCK (wrklock);
-  X_LOCK (reqlock);
-  X_LOCK (reslock);
-#if !HAVE_PREADWRITE
-  X_LOCK (preadwritelock);
-#endif
-#if !HAVE_READDIR_R
-  X_LOCK (readdirlock);
-#endif
-}
-
-static void atfork_parent (void)
-{
-#if !HAVE_READDIR_R
-  X_UNLOCK (readdirlock);
-#endif
-#if !HAVE_PREADWRITE
-  X_UNLOCK (preadwritelock);
-#endif
-  X_UNLOCK (reslock);
-  X_UNLOCK (reqlock);
-  X_UNLOCK (wrklock);
 }
 
 static void atfork_child (void)
 {
-  aio_req prv;
-
-  while (prv = reqq_shift (&req_queue))
-    req_destroy (prv);
-
-  while (prv = reqq_shift (&res_queue))
-    req_destroy (prv);
-
-  while (wrk_first.next != &wrk_first)
-    {
-      worker *wrk = wrk_first.next;
-
-      if (wrk->req)
-        req_destroy (wrk->req);
-
-      worker_clear (wrk);
-      worker_free (wrk);
-    }
-
-  started  = 0;
-  idle     = 0;
-  nreqs    = 0;
-  nready   = 0;
-  npending = 0;
-
   create_respipe ();
-
-  atfork_parent ();
 }
 
 #define dREQ							\
   aio_req req;							\
   int req_pri = next_pri;					\
-  next_pri = DEFAULT_PRI + PRI_BIAS;				\
+  next_pri = EIO_DEFAULT_PRI + EIO_PRI_BIAS;			\
 								\
   if (SvOK (callback) && !SvROK (callback))			\
     croak ("callback must be undef or of reference type");	\
 								\
-  Newz (0, req, 1, aio_cb);					\
+  Newz (0, req, 1, eio_req);					\
   if (!req)							\
-    croak ("out of memory during aio_req allocation");		\
+    croak ("out of memory during eio_req allocation");		\
 								\
   req->callback = newSVsv (callback);				\
   req->pri = req_pri
 
 #define REQ_SEND						\
-  req_send (req);						\
+  req_submit (req);						\
 								\
   if (GIMME_V != G_VOID)					\
     XPUSHs (req_sv (req, AIO_REQ_KLASS));
@@ -1487,48 +488,52 @@ BOOT:
 	X_COND_CHECK  (reqwait);
 #else
         newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
-        newCONSTSUB (stash, "SIGIO",    newSViv (SIGIO));
 #endif
 
         create_respipe ();
 
-        X_THREAD_ATFORK (atfork_prepare, atfork_parent, atfork_child);
+        if (eio_init (want_poll, done_poll) < 0)
+          croak ("IO::AIO: unable to initialise eio library");
+
+        /* atfork child called in fifo order, so before eio's handler */
+        X_THREAD_ATFORK (0, 0, atfork_child);
 }
 
 void
 max_poll_reqs (int nreqs)
 	PROTOTYPE: $
         CODE:
-        max_poll_reqs = nreqs;
+        eio_set_max_poll_reqs (nreqs);
 
 void
 max_poll_time (double nseconds)
 	PROTOTYPE: $
         CODE:
-        max_poll_time = nseconds * AIO_TICKS;
+        eio_set_max_poll_time (nseconds);
 
 void
 min_parallel (int nthreads)
 	PROTOTYPE: $
+        CODE:
+        eio_set_min_parallel (nthreads);
 
 void
 max_parallel (int nthreads)
 	PROTOTYPE: $
+        CODE:
+        eio_set_max_parallel (nthreads);
 
 void
 max_idle (int nthreads)
 	PROTOTYPE: $
         CODE:
-        set_max_idle (nthreads);
+        eio_set_max_idle (nthreads);
 
-int
+void
 max_outstanding (int maxreqs)
 	PROTOTYPE: $
         CODE:
-        RETVAL = max_outstanding;
         max_outstanding = maxreqs;
-	OUTPUT:
-        RETVAL
 
 void
 aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
@@ -1537,11 +542,11 @@ aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
 {
         dREQ;
 
-        req->type = REQ_OPEN;
+        req->type = EIO_OPEN;
         req->sv1  = newSVsv (pathname);
         req->ptr1 = SvPVbyte_nolen (req->sv1);
         req->int1 = flags;
-        req->mode = mode;
+        req->int2 = mode;
 
         REQ_SEND;
 }
@@ -1550,8 +555,8 @@ void
 aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $;$
         ALIAS:
-           aio_fsync     = REQ_FSYNC
-           aio_fdatasync = REQ_FDATASYNC
+           aio_fsync     = EIO_FSYNC
+           aio_fdatasync = EIO_FDATASYNC
 	PPCODE:
 {
         dREQ;
@@ -1568,11 +573,25 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $;$
 	PPCODE:
 {
+        static int close_pipe = -1; /* dummy fd to close fds via dup2 */
         dREQ;
 
-        req->type = REQ_CLOSE;
-        req->sv1  = newSVsv (fh);
-        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        if (close_pipe < 0)
+          {
+            int pipefd [2];
+
+            if (pipe (pipefd) < 0
+                || close (pipefd [1]) < 0
+                || fcntl (pipefd [0], F_SETFD, FD_CLOEXEC) < 0)
+              abort (); /*D*/
+
+            close_pipe = pipefd [0];
+          }
+
+        req->type = EIO_DUP2;
+        req->int1 = close_pipe;
+        req->sv2  = newSVsv (fh);
+        req->int2 = PerlIO_fileno (IoIFP (sv_2io (fh)));
 
         REQ_SEND (req);
 }
@@ -1580,8 +599,8 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
 void
 aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback=&PL_sv_undef)
         ALIAS:
-           aio_read  = REQ_READ
-           aio_write = REQ_WRITE
+           aio_read  = EIO_READ
+           aio_write = EIO_WRITE
 	PROTOTYPE: $$$$$;$
         PPCODE:
 {
@@ -1598,7 +617,7 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
         if (dataoffset < 0 || dataoffset > svlen)
           croak ("dataoffset outside of data scalar");
 
-        if (ix == REQ_WRITE)
+        if (ix == EIO_WRITE)
           {
             /* write: check length and adjust. */
             if (!SvOK (length) || len + dataoffset > svlen)
@@ -1618,12 +637,12 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
 
           req->type = ix;
           req->sv1  = newSVsv (fh);
-          req->int1 = PerlIO_fileno (ix == REQ_READ ? IoIFP (sv_2io (fh))
+          req->int1 = PerlIO_fileno (ix == EIO_READ ? IoIFP (sv_2io (fh))
                                                     : IoOFP (sv_2io (fh)));
           req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
           req->size = len;
           req->sv2  = SvREFCNT_inc (data);
-          req->ptr1 = (char *)svptr + dataoffset;
+          req->ptr2 = (char *)svptr + dataoffset;
           req->stroffset = dataoffset;
 
           if (!SvREADONLY (data))
@@ -1647,11 +666,11 @@ aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
         data = newSV (NAME_MAX);
         SvPOK_on (data);
 
-        req->type = REQ_READLINK;
+        req->type = EIO_READLINK;
         req->sv1  = newSVsv (path);
-        req->ptr2 = SvPVbyte_nolen (req->sv1);
+        req->ptr1 = SvPVbyte_nolen (req->sv1);
         req->sv2  = data;
-        req->ptr1 = SvPVbyte_nolen (data);
+        req->ptr2 = SvPVbyte_nolen (data);
 
         REQ_SEND;
 }
@@ -1663,7 +682,7 @@ aio_sendfile (SV *out_fh, SV *in_fh, SV *in_offset, UV length, SV *callback=&PL_
 {
 	dREQ;
 
-        req->type = REQ_SENDFILE;
+        req->type = EIO_SENDFILE;
         req->sv1  = newSVsv (out_fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (out_fh)));
         req->sv2  = newSVsv (in_fh);
@@ -1681,7 +700,7 @@ aio_readahead (SV *fh, SV *offset, IV length, SV *callback=&PL_sv_undef)
 {
 	dREQ;
 
-        req->type = REQ_READAHEAD;
+        req->type = EIO_READAHEAD;
         req->sv1  = newSVsv (fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
         req->offs = SvVAL64 (offset);
@@ -1693,20 +712,20 @@ aio_readahead (SV *fh, SV *offset, IV length, SV *callback=&PL_sv_undef)
 void
 aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
         ALIAS:
-           aio_stat  = REQ_STAT
-           aio_lstat = REQ_LSTAT
+           aio_stat  = EIO_STAT
+           aio_lstat = EIO_LSTAT
 	PPCODE:
 {
 	dREQ;
 
-        req->ptr2 = malloc (sizeof (Stat_t));
+        req->ptr2 = malloc (sizeof (EIO_STRUCT_STAT));
         if (!req->ptr2)
           {
             req_destroy (req);
             croak ("out of memory during aio_stat statdata allocation");
           }
 
-        req->flags |= FLAG_PTR2_FREE;
+        req->flags |= EIO_FLAG_PTR2_FREE;
         req->sv1 = newSVsv (fh_or_path);
 
         if (SvPOK (fh_or_path))
@@ -1716,7 +735,7 @@ aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
           }
         else
           {
-            req->type = REQ_FSTAT;
+            req->type = EIO_FSTAT;
             req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
@@ -1735,12 +754,12 @@ aio_utime (SV8 *fh_or_path, SV *atime, SV *mtime, SV *callback=&PL_sv_undef)
 
         if (SvPOK (fh_or_path))
           {
-            req->type = REQ_UTIME;
+            req->type = EIO_UTIME;
             req->ptr1 = SvPVbyte_nolen (req->sv1);
           }
         else
           {
-            req->type = REQ_FUTIME;
+            req->type = EIO_FUTIME;
             req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
@@ -1758,12 +777,12 @@ aio_truncate (SV8 *fh_or_path, SV *offset, SV *callback=&PL_sv_undef)
 
         if (SvPOK (fh_or_path))
           {
-            req->type = REQ_TRUNCATE;
+            req->type = EIO_TRUNCATE;
             req->ptr1 = SvPVbyte_nolen (req->sv1);
           }
         else
           {
-            req->type = REQ_FTRUNCATE;
+            req->type = EIO_FTRUNCATE;
             req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
@@ -1772,23 +791,22 @@ aio_truncate (SV8 *fh_or_path, SV *offset, SV *callback=&PL_sv_undef)
 
 void
 aio_chmod (SV8 *fh_or_path, int mode, SV *callback=&PL_sv_undef)
+	ALIAS:
+        aio_chmod  = EIO_CHMOD
+        aio_fchmod = EIO_FCHMOD
+        aio_mkdir  = EIO_MKDIR
 	PPCODE:
 {
 	dREQ;
 
-        req->mode = mode;
+        req->type = ix;
+        req->int2 = mode;
         req->sv1  = newSVsv (fh_or_path);
 
-        if (SvPOK (fh_or_path))
-          {
-            req->type = REQ_CHMOD;
-            req->ptr1 = SvPVbyte_nolen (req->sv1);
-          }
+        if (ix == EIO_FCHMOD)
+          req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
         else
-          {
-            req->type = REQ_FCHMOD;
-            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
-          }
+          req->ptr1 = SvPVbyte_nolen (req->sv1);
 
         REQ_SEND;
 }
@@ -1805,12 +823,12 @@ aio_chown (SV8 *fh_or_path, SV *uid, SV *gid, SV *callback=&PL_sv_undef)
 
         if (SvPOK (fh_or_path))
           {
-            req->type = REQ_CHOWN;
+            req->type = EIO_CHOWN;
             req->ptr1 = SvPVbyte_nolen (req->sv1);
           }
         else
           {
-            req->type = REQ_FCHOWN;
+            req->type = EIO_FCHOWN;
             req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 
@@ -1820,9 +838,9 @@ aio_chown (SV8 *fh_or_path, SV *uid, SV *gid, SV *callback=&PL_sv_undef)
 void
 aio_unlink (SV8 *pathname, SV *callback=&PL_sv_undef)
         ALIAS:
-           aio_unlink  = REQ_UNLINK
-           aio_rmdir   = REQ_RMDIR
-           aio_readdir = REQ_READDIR
+           aio_unlink  = EIO_UNLINK
+           aio_rmdir   = EIO_RMDIR
+           aio_readdir = EIO_READDIR
 	PPCODE:
 {
 	dREQ;
@@ -1830,20 +848,6 @@ aio_unlink (SV8 *pathname, SV *callback=&PL_sv_undef)
         req->type = ix;
 	req->sv1  = newSVsv (pathname);
 	req->ptr1 = SvPVbyte_nolen (req->sv1);
-
-	REQ_SEND;
-}
-
-void
-aio_mkdir (SV8 *pathname, int mode, SV *callback=&PL_sv_undef)
-	PPCODE:
-{
-	dREQ;
-	
-        req->type = REQ_MKDIR;
-	req->sv1  = newSVsv (pathname);
-	req->ptr1 = SvPVbyte_nolen (req->sv1);
-        req->mode = mode;
 
 	REQ_SEND;
 }
@@ -1851,18 +855,18 @@ aio_mkdir (SV8 *pathname, int mode, SV *callback=&PL_sv_undef)
 void
 aio_link (SV8 *oldpath, SV8 *newpath, SV *callback=&PL_sv_undef)
         ALIAS:
-           aio_link    = REQ_LINK
-           aio_symlink = REQ_SYMLINK
-           aio_rename  = REQ_RENAME
+           aio_link    = EIO_LINK
+           aio_symlink = EIO_SYMLINK
+           aio_rename  = EIO_RENAME
 	PPCODE:
 {
 	dREQ;
 	
         req->type = ix;
-	req->sv2  = newSVsv (oldpath);
-	req->ptr2 = SvPVbyte_nolen (req->sv2);
-	req->sv1  = newSVsv (newpath);
+	req->sv1  = newSVsv (oldpath);
 	req->ptr1 = SvPVbyte_nolen (req->sv1);
+	req->sv2  = newSVsv (newpath);
+	req->ptr2 = SvPVbyte_nolen (req->sv2);
 	
 	REQ_SEND;
 }
@@ -1873,10 +877,10 @@ aio_mknod (SV8 *pathname, int mode, UV dev, SV *callback=&PL_sv_undef)
 {
 	dREQ;
 	
-        req->type = REQ_MKNOD;
+        req->type = EIO_MKNOD;
 	req->sv1  = newSVsv (pathname);
 	req->ptr1 = SvPVbyte_nolen (req->sv1);
-        req->mode = (mode_t)mode;
+        req->int2 = (mode_t)mode;
         req->offs = dev;
 	
 	REQ_SEND;
@@ -1888,7 +892,7 @@ aio_busy (double delay, SV *callback=&PL_sv_undef)
 {
 	dREQ;
 
-        req->type = REQ_BUSY;
+        req->type = EIO_BUSY;
         req->nv1  = delay < 0. ? 0. : delay;
 
 	REQ_SEND;
@@ -1901,17 +905,17 @@ aio_group (SV *callback=&PL_sv_undef)
 {
 	dREQ;
 
-        req->type = REQ_GROUP;
+        req->type = EIO_GROUP;
 
-        req_send (req);
+        eio_submit (req);
         XPUSHs (req_sv (req, AIO_GRP_KLASS));
 }
 
 void
 aio_nop (SV *callback=&PL_sv_undef)
 	ALIAS:
-           aio_nop  = REQ_NOP
-           aio_sync = REQ_SYNC
+           aio_nop  = EIO_NOP
+           aio_sync = EIO_SYNC
 	PPCODE:
 {
 	dREQ;
@@ -1925,12 +929,12 @@ int
 aioreq_pri (int pri = 0)
 	PROTOTYPE: ;$
 	CODE:
-	RETVAL = next_pri - PRI_BIAS;
+	RETVAL = next_pri - EIO_PRI_BIAS;
 	if (items > 0)
 	  {
-	    if (pri < PRI_MIN) pri = PRI_MIN;
-	    if (pri > PRI_MAX) pri = PRI_MAX;
-	    next_pri = pri + PRI_BIAS;
+	    if (pri < EIO_PRI_MIN) pri = EIO_PRI_MIN;
+	    if (pri > EIO_PRI_MAX) pri = EIO_PRI_MAX;
+	    next_pri = pri + EIO_PRI_BIAS;
 	  }
 	OUTPUT:
 	RETVAL
@@ -1939,15 +943,15 @@ void
 aioreq_nice (int nice = 0)
 	CODE:
 	nice = next_pri - nice;
-	if (nice < PRI_MIN) nice = PRI_MIN;
-	if (nice > PRI_MAX) nice = PRI_MAX;
-	next_pri = nice + PRI_BIAS;
+	if (nice < EIO_PRI_MIN) nice = EIO_PRI_MIN;
+	if (nice > EIO_PRI_MAX) nice = EIO_PRI_MAX;
+	next_pri = nice + EIO_PRI_BIAS;
 
 void
 flush ()
 	PROTOTYPE:
 	CODE:
-        while (nreqs)
+        while (eio_nreqs ())
           {
             poll_wait ();
             poll_cb ();
@@ -1984,47 +988,11 @@ poll_wait()
 	CODE:
         poll_wait ();
 
-void
-setsig (int signum = SIGIO)
-	PROTOTYPE: ;$
-        CODE:
-{
-        if (block_sig_level)
-          croak ("cannot call IO::AIO::setsig from within aio_block/callback");
-
-        X_LOCK (reslock);
-        main_tid = pthread_self ();
-        main_sig = signum;
-        X_UNLOCK (reslock);
-
-        if (main_sig && npending)
-	  pthread_kill (main_tid, main_sig);
-}
-
-void
-aio_block (SV *cb)
-	PROTOTYPE: &
-        PPCODE:
-{
-	int count;
-
-        block_sig ();
-        PUSHMARK (SP);
-        PUTBACK;
-        count = call_sv (cb, GIMME_V | G_NOARGS | G_EVAL);
-        unblock_sig ();
-
-        if (SvTRUE (ERRSV))
-          croak (0);
-
-        XSRETURN (count);
-}
-
 int
 nreqs()
 	PROTOTYPE:
 	CODE:
-        RETVAL = nreqs;
+        RETVAL = eio_nreqs ();
 	OUTPUT:
 	RETVAL
 
@@ -2032,7 +1000,7 @@ int
 nready()
 	PROTOTYPE:
 	CODE:
-        RETVAL = get_nready ();
+        RETVAL = eio_nready ();
 	OUTPUT:
 	RETVAL
 
@@ -2040,7 +1008,7 @@ int
 npending()
 	PROTOTYPE:
 	CODE:
-        RETVAL = get_npending ();
+        RETVAL = eio_npending ();
 	OUTPUT:
 	RETVAL
 
@@ -2054,6 +1022,11 @@ nthreads()
 	OUTPUT:
 	RETVAL
 
+void _on_next_submit (SV *cb)
+	CODE:
+        SvREFCNT_dec (on_next_submit);
+        on_next_submit = SvOK (cb) ? newSVsv (cb) : 0;
+
 PROTOTYPES: DISABLE
 
 MODULE = IO::AIO                PACKAGE = IO::AIO::REQ
@@ -2061,7 +1034,7 @@ MODULE = IO::AIO                PACKAGE = IO::AIO::REQ
 void
 cancel (aio_req_ornot req)
 	CODE:
-        req_cancel (req);
+        eio_cancel (req);
 
 void
 cb (aio_req_ornot req, SV *callback=&PL_sv_undef)
@@ -2076,34 +1049,21 @@ add (aio_req grp, ...)
         PPCODE:
 {
 	int i;
-        aio_req req;
-
-        if (main_sig && !block_sig_level)
-          croak ("aio_group->add called outside aio_block/callback context while IO::AIO::setsig is in use");
 
         if (grp->int1 == 2)
           croak ("cannot add requests to IO::AIO::GRP after the group finished");
 
 	for (i = 1; i < items; ++i )
           {
+            aio_req req;
+
             if (GIMME_V != G_VOID)
               XPUSHs (sv_2mortal (newSVsv (ST (i))));
 
             req = SvAIO_REQ (ST (i));
 
             if (req)
-              {
-                ++grp->size;
-                req->grp = grp;
-
-                req->grp_prev = 0;
-                req->grp_next = grp->grp_first;
-
-                if (grp->grp_first)
-                  grp->grp_first->grp_prev = req;
-
-                grp->grp_first = req;
-              }
+              eio_grp_add (grp, req);
           }
 }
 
@@ -2138,8 +1098,7 @@ errno (aio_req grp, int errorno = errno)
 void
 limit (aio_req grp, int limit)
 	CODE:
-        grp->int2 = limit;
-        aio_grp_feed (grp);
+        eio_grp_limit (grp, limit);
 
 void
 feed (aio_req grp, SV *callback=&PL_sv_undef)
@@ -2151,6 +1110,6 @@ feed (aio_req grp, SV *callback=&PL_sv_undef)
         if (grp->int2 <= 0)
           grp->int2 = 2;
 
-        aio_grp_feed (grp);
+        eio_grp_limit (grp, grp->int2);
 }
 

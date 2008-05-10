@@ -28,9 +28,8 @@ IO::AIO - Asynchronous Input/Output
  my $grp = aio_group sub { print "all stats done\n" };
  add $grp aio_stat "..." for ...;
 
- # AnyEvent integration (EV, Event, Glib, Tk, urxvt, pureperl...)
- open my $fh, "<&=" . IO::AIO::poll_fileno or die "$!";
- my $w = AnyEvent->io (fh => $fh, poll => 'r', cb => sub { IO::AIO::poll_cb });
+ # AnyEvent integration (EV, Event, Glib, Tk, POE, urxvt, pureperl...)
+ use AnyEvent::AIO;
 
  # EV integration
  my $w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
@@ -196,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '2.62';
+   our $VERSION = '3.0';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
@@ -206,7 +205,7 @@ BEGIN {
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate);
 
-   our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice aio_block));
+   our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
                        nreqs nready npending nthreads
@@ -542,26 +541,24 @@ memory. Status is the same as with aio_read.
 =cut
 
 sub aio_load($$;$) {
-   aio_block {
-      my ($path, undef, $cb) = @_;
-      my $data = \$_[1];
+   my ($path, undef, $cb) = @_;
+   my $data = \$_[1];
 
-      my $pri = aioreq_pri;
-      my $grp = aio_group $cb;
+   my $pri = aioreq_pri;
+   my $grp = aio_group $cb;
+
+   aioreq_pri $pri;
+   add $grp aio_open $path, O_RDONLY, 0, sub {
+      my $fh = shift
+         or return $grp->result (-1);
 
       aioreq_pri $pri;
-      add $grp aio_open $path, O_RDONLY, 0, sub {
-         my $fh = shift
-            or return $grp->result (-1);
-
-         aioreq_pri $pri;
-         add $grp aio_read $fh, 0, (-s $fh), $$data, 0, sub {
-            $grp->result ($_[0]);
-         };
+      add $grp aio_read $fh, 0, (-s $fh), $$data, 0, sub {
+         $grp->result ($_[0]);
       };
+   };
 
-      $grp
-   }
+   $grp
 }
 
 =item aio_copy $srcpath, $dstpath, $callback->($status)
@@ -582,54 +579,52 @@ errors are being ignored.
 =cut
 
 sub aio_copy($$;$) {
-   aio_block {
-      my ($src, $dst, $cb) = @_;
+   my ($src, $dst, $cb) = @_;
 
-      my $pri = aioreq_pri;
-      my $grp = aio_group $cb;
+   my $pri = aioreq_pri;
+   my $grp = aio_group $cb;
 
-      aioreq_pri $pri;
-      add $grp aio_open $src, O_RDONLY, 0, sub {
-         if (my $src_fh = $_[0]) {
-            my @stat = stat $src_fh;
+   aioreq_pri $pri;
+   add $grp aio_open $src, O_RDONLY, 0, sub {
+      if (my $src_fh = $_[0]) {
+         my @stat = stat $src_fh;
 
-            aioreq_pri $pri;
-            add $grp aio_open $dst, O_CREAT | O_WRONLY | O_TRUNC, 0200, sub {
-               if (my $dst_fh = $_[0]) {
-                  aioreq_pri $pri;
-                  add $grp aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
-                     if ($_[0] == $stat[7]) {
-                        $grp->result (0);
-                        close $src_fh;
+         aioreq_pri $pri;
+         add $grp aio_open $dst, O_CREAT | O_WRONLY | O_TRUNC, 0200, sub {
+            if (my $dst_fh = $_[0]) {
+               aioreq_pri $pri;
+               add $grp aio_sendfile $dst_fh, $src_fh, 0, $stat[7], sub {
+                  if ($_[0] == $stat[7]) {
+                     $grp->result (0);
+                     close $src_fh;
 
-                        # those should not normally block. should. should.
-                        utime $stat[8], $stat[9], $dst;
-                        chmod $stat[2] & 07777, $dst_fh;
-                        chown $stat[4], $stat[5], $dst_fh;
+                     # those should not normally block. should. should.
+                     utime $stat[8], $stat[9], $dst;
+                     chmod $stat[2] & 07777, $dst_fh;
+                     chown $stat[4], $stat[5], $dst_fh;
 
-                        aioreq_pri $pri;
-                        add $grp aio_close $dst_fh;
-                     } else {
-                        $grp->result (-1);
-                        close $src_fh;
-                        close $dst_fh;
+                     aioreq_pri $pri;
+                     add $grp aio_close $dst_fh;
+                  } else {
+                     $grp->result (-1);
+                     close $src_fh;
+                     close $dst_fh;
 
-                        aioreq $pri;
-                        add $grp aio_unlink $dst;
-                     }
-                  };
-               } else {
-                  $grp->result (-1);
-               }
-            },
+                     aioreq $pri;
+                     add $grp aio_unlink $dst;
+                  }
+               };
+            } else {
+               $grp->result (-1);
+            }
+         },
 
-         } else {
-            $grp->result (-1);
-         }
-      };
+      } else {
+         $grp->result (-1);
+      }
+   };
 
-      $grp
-   }
+   $grp
 }
 
 =item aio_move $srcpath, $dstpath, $callback->($status)
@@ -645,31 +640,29 @@ that is successful, unlinking the C<$srcpath>.
 =cut
 
 sub aio_move($$;$) {
-   aio_block {
-      my ($src, $dst, $cb) = @_;
+   my ($src, $dst, $cb) = @_;
 
-      my $pri = aioreq_pri;
-      my $grp = aio_group $cb;
+   my $pri = aioreq_pri;
+   my $grp = aio_group $cb;
 
-      aioreq_pri $pri;
-      add $grp aio_rename $src, $dst, sub {
-         if ($_[0] && $! == EXDEV) {
-            aioreq_pri $pri;
-            add $grp aio_copy $src, $dst, sub {
-               $grp->result ($_[0]);
-
-               if (!$_[0]) {
-                  aioreq_pri $pri;
-                  add $grp aio_unlink $src;
-               }
-            };
-         } else {
+   aioreq_pri $pri;
+   add $grp aio_rename $src, $dst, sub {
+      if ($_[0] && $! == EXDEV) {
+         aioreq_pri $pri;
+         add $grp aio_copy $src, $dst, sub {
             $grp->result ($_[0]);
-         }
-      };
 
-      $grp
-   }
+            if (!$_[0]) {
+               aioreq_pri $pri;
+               add $grp aio_unlink $src;
+            }
+         };
+      } else {
+         $grp->result ($_[0]);
+      }
+   };
+
+   $grp
 }
 
 =item aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
@@ -727,91 +720,89 @@ directory counting heuristic.
 =cut
 
 sub aio_scandir($$;$) {
-   aio_block {
-      my ($path, $maxreq, $cb) = @_;
+   my ($path, $maxreq, $cb) = @_;
 
-      my $pri = aioreq_pri;
+   my $pri = aioreq_pri;
 
-      my $grp = aio_group $cb;
+   my $grp = aio_group $cb;
 
-      $maxreq = 4 if $maxreq <= 0;
+   $maxreq = 4 if $maxreq <= 0;
 
-      # stat once
+   # stat once
+   aioreq_pri $pri;
+   add $grp aio_stat $path, sub {
+      return $grp->result () if $_[0];
+      my $now = time;
+      my $hash1 = join ":", (stat _)[0,1,3,7,9];
+
+      # read the directory entries
       aioreq_pri $pri;
-      add $grp aio_stat $path, sub {
-         return $grp->result () if $_[0];
-         my $now = time;
-         my $hash1 = join ":", (stat _)[0,1,3,7,9];
+      add $grp aio_readdir $path, sub {
+         my $entries = shift
+            or return $grp->result ();
 
-         # read the directory entries
+         # stat the dir another time
          aioreq_pri $pri;
-         add $grp aio_readdir $path, sub {
-            my $entries = shift
-               or return $grp->result ();
+         add $grp aio_stat $path, sub {
+            my $hash2 = join ":", (stat _)[0,1,3,7,9];
 
-            # stat the dir another time
-            aioreq_pri $pri;
-            add $grp aio_stat $path, sub {
-               my $hash2 = join ":", (stat _)[0,1,3,7,9];
+            my $ndirs;
 
-               my $ndirs;
+            # take the slow route if anything looks fishy
+            if ($hash1 ne $hash2 or (stat _)[9] == $now) {
+               $ndirs = -1;
+            } else {
+               # if nlink == 2, we are finished
+               # on non-posix-fs's, we rely on nlink < 2
+               $ndirs = (stat _)[3] - 2
+                  or return $grp->result ([], $entries);
+            }
 
-               # take the slow route if anything looks fishy
-               if ($hash1 ne $hash2 or (stat _)[9] == $now) {
-                  $ndirs = -1;
-               } else {
-                  # if nlink == 2, we are finished
-                  # on non-posix-fs's, we rely on nlink < 2
-                  $ndirs = (stat _)[3] - 2
-                     or return $grp->result ([], $entries);
-               }
+            # sort into likely dirs and likely nondirs
+            # dirs == files without ".", short entries first
+            $entries = [map $_->[0],
+                           sort { $b->[1] cmp $a->[1] }
+                              map [$_, sprintf "%s%04d", (/.\./ ? "1" : "0"), length],
+                                 @$entries];
 
-               # sort into likely dirs and likely nondirs
-               # dirs == files without ".", short entries first
-               $entries = [map $_->[0],
-                              sort { $b->[1] cmp $a->[1] }
-                                 map [$_, sprintf "%s%04d", (/.\./ ? "1" : "0"), length],
-                                    @$entries];
+            my (@dirs, @nondirs);
 
-               my (@dirs, @nondirs);
+            my $statgrp = add $grp aio_group sub {
+               $grp->result (\@dirs, \@nondirs);
+            };
 
-               my $statgrp = add $grp aio_group sub {
-                  $grp->result (\@dirs, \@nondirs);
-               };
+            limit $statgrp $maxreq;
+            feed $statgrp sub {
+               return unless @$entries;
+               my $entry = pop @$entries;
 
-               limit $statgrp $maxreq;
-               feed $statgrp sub {
-                  return unless @$entries;
-                  my $entry = pop @$entries;
+               aioreq_pri $pri;
+               add $statgrp aio_stat "$path/$entry/.", sub {
+                  if ($_[0] < 0) {
+                     push @nondirs, $entry;
+                  } else {
+                     # need to check for real directory
+                     aioreq_pri $pri;
+                     add $statgrp aio_lstat "$path/$entry", sub {
+                        if (-d _) {
+                           push @dirs, $entry;
 
-                  aioreq_pri $pri;
-                  add $statgrp aio_stat "$path/$entry/.", sub {
-                     if ($_[0] < 0) {
-                        push @nondirs, $entry;
-                     } else {
-                        # need to check for real directory
-                        aioreq_pri $pri;
-                        add $statgrp aio_lstat "$path/$entry", sub {
-                           if (-d _) {
-                              push @dirs, $entry;
-
-                              unless (--$ndirs) {
-                                 push @nondirs, @$entries;
-                                 feed $statgrp;
-                              }
-                           } else {
-                              push @nondirs, $entry;
+                           unless (--$ndirs) {
+                              push @nondirs, @$entries;
+                              feed $statgrp;
                            }
+                        } else {
+                           push @nondirs, $entry;
                         }
                      }
-                  };
+                  }
                };
             };
          };
       };
+   };
 
-      $grp
-   }
+   $grp
 }
 
 =item aio_rmtree $path, $callback->($status)
@@ -825,30 +816,28 @@ everything else.
 
 sub aio_rmtree;
 sub aio_rmtree($;$) {
-   aio_block {
-      my ($path, $cb) = @_;
+   my ($path, $cb) = @_;
 
-      my $pri = aioreq_pri;
-      my $grp = aio_group $cb;
+   my $pri = aioreq_pri;
+   my $grp = aio_group $cb;
 
-      aioreq_pri $pri;
-      add $grp aio_scandir $path, 0, sub {
-         my ($dirs, $nondirs) = @_;
+   aioreq_pri $pri;
+   add $grp aio_scandir $path, 0, sub {
+      my ($dirs, $nondirs) = @_;
 
-         my $dirgrp = aio_group sub {
-            add $grp aio_rmdir $path, sub {
-               $grp->result ($_[0]);
-            };
+      my $dirgrp = aio_group sub {
+         add $grp aio_rmdir $path, sub {
+            $grp->result ($_[0]);
          };
-
-         (aioreq_pri $pri), add $dirgrp aio_rmtree "$path/$_" for @$dirs;
-         (aioreq_pri $pri), add $dirgrp aio_unlink "$path/$_" for @$nondirs;
-
-         add $grp $dirgrp;
       };
 
-      $grp
-   }
+      (aioreq_pri $pri), add $dirgrp aio_rmtree "$path/$_" for @$dirs;
+      (aioreq_pri $pri), add $dirgrp aio_unlink "$path/$_" for @$nondirs;
+
+      add $grp $dirgrp;
+   };
+
+   $grp
 }
 
 =item aio_sync $callback->($status)
@@ -882,30 +871,28 @@ Passes C<0> when everything went ok, and C<-1> on error.
 =cut
 
 sub aio_pathsync($;$) {
-   aio_block {
-      my ($path, $cb) = @_;
+   my ($path, $cb) = @_;
 
-      my $pri = aioreq_pri;
-      my $grp = aio_group $cb;
+   my $pri = aioreq_pri;
+   my $grp = aio_group $cb;
 
-      aioreq_pri $pri;
-      add $grp aio_open $path, O_RDONLY, 0, sub {
-         my ($fh) = @_;
-         if ($fh) {
+   aioreq_pri $pri;
+   add $grp aio_open $path, O_RDONLY, 0, sub {
+      my ($fh) = @_;
+      if ($fh) {
+         aioreq_pri $pri;
+         add $grp aio_fsync $fh, sub {
+            $grp->result ($_[0]);
+
             aioreq_pri $pri;
-            add $grp aio_fsync $fh, sub {
-               $grp->result ($_[0]);
+            add $grp aio_close $fh;
+         };
+      } else {
+         $grp->result (-1);
+      }
+   };
 
-               aioreq_pri $pri;
-               add $grp aio_close $fh;
-            };
-         } else {
-            $grp->result (-1);
-         }
-      };
-
-      $grp
-   }
+   $grp
 }
 
 =item aio_group $callback->(...)
@@ -1261,7 +1248,7 @@ The default is probably ok in most situations, especially if thread
 creation is fast. If thread creation is very slow on your system you might
 want to use larger values.
 
-=item $oldmaxreqs = IO::AIO::max_outstanding $maxreqs
+=item IO::AIO::max_outstanding $maxreqs
 
 This is a very bad function to use in interactive programs because it
 blocks, and a bad way to reduce concurrency because it is inexact: Better
@@ -1276,7 +1263,7 @@ The default value is very large, so there is no practical limit on the
 number of outstanding requests.
 
 You can still queue as many requests as you want. Therefore,
-C<max_oustsanding> is mainly useful in simple scripts (with low values) or
+C<max_outstanding> is mainly useful in simple scripts (with low values) or
 as a stop gap to shield against fatal memory overflow (with large values).
 
 =back
@@ -1356,7 +1343,8 @@ Known bugs will be fixed in the next release.
 
 =head1 SEE ALSO
 
-L<Coro::AIO>.
+L<AnyEvent::AIO> for easy integration into event loops, L<Coro::AIO> for a
+more natural syntax.
 
 =head1 AUTHOR
 
