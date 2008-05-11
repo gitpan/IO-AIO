@@ -1,4 +1,4 @@
-/* config.h.in.  Generated from configure.ac by autoheader.  */
+/* libeio/config.h.in.  Generated from configure.ac by autoheader.  */
 
 /* fdatasync(2) is available */
 #undef HAVE_FDATASYNC

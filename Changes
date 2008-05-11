@@ -6,6 +6,12 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.01 Sun May 11 03:07:03 CEST 2008
+	- (libeio) make it compile on systems without readahead or readdir_r.
+        - (libeio) improve configure check for readahead availability.
+        - do not try to link against -lrt.
+	- use a separate configure script for IO::AIO (not the libeio one).
+
 3.0  Sun May 11 00:57:14 CEST 2008
 	- added bin/treescan to the distribution.
         - switched to using libeio.

@@ -1,8 +1,9 @@
-AC_PREREQ(2.59)
-AC_INIT
-AC_CONFIG_HEADERS([config.h])
-
-AC_PROG_CC
+AC_SEARCH_LIBS(
+   pthread_create,
+   [pthread pthreads pthreadVC2],
+   ,
+   [AC_MSG_ERROR(pthread functions not found)]
+)
 
 AC_CACHE_CHECK(for futimes, ac_cv_futimes, [AC_LINK_IFELSE([[
 #include <sys/types.h>
@@ -102,4 +103,3 @@ int main(void)
 ],ac_cv_sendfile=yes,ac_cv_sendfile=no)])
 test $ac_cv_sendfile = yes && AC_DEFINE(HAVE_SENDFILE, 1, sendfile(2) is available and supported)
 
-AC_OUTPUT

@@ -15,6 +15,9 @@
 #include <fcntl.h>
 #include <sched.h>
 
+/* perl namespace pollution */
+#undef VERSION
+
 #ifdef _WIN32
 
 # define EIO_STRUCT_DIRENT Direntry_t

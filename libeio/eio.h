@@ -2,7 +2,7 @@
 #define EIO_H_
 
 #include <stddef.h>
-#include <stdlib.h>
+#include <sys/types.h>
 
 typedef struct eio_req eio_req;
 
@@ -46,8 +46,8 @@ struct eio_req
   size_t size;     /* read, write, readahead, sendfile: length */
   void *ptr1;      /* all applicable requests: pathname, old name */
   void *ptr2;      /* all applicable requests: new name or memory buffer */
-  eio_tstamp nv1;      /* utime, futime: atime; busy: sleep time */
-  eio_tstamp nv2;      /* utime, futime: mtime */
+  eio_tstamp nv1;  /* utime, futime: atime; busy: sleep time */
+  eio_tstamp nv2;  /* utime, futime: mtime */
 
   int type;        /* EIO_xxx constant */
   int int1;        /* all applicable requests: file descriptor; sendfile: output fd; open: flags */

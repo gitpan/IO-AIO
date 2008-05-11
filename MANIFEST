@@ -18,9 +18,12 @@ t/aio_test_common.pm
 libeio/xthread.h
 libeio/eio.h
 libeio/eio.c
-libeio/configure.ac
+libeio/libeio.m4
 libeio/config.h.in
-libeio/configure
+
+configure.ac
+configure
+autogen.sh
 
 typemap
 META.yml                                 Module meta-data (added by MakeMaker)

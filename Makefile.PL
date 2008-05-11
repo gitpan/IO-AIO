@@ -1,3 +1,5 @@
+use v5.8.8;
+
 use ExtUtils::MakeMaker;
 
 use Config;
@@ -48,7 +50,7 @@ EOF
       $ENV{LIBS}     = $Config{libs};
       $ENV{LINKER}   = $Config{ld}; # nonstandard
 
-      system $ENV{SHELL}, -c => "cd libeio && ./configure --prefix \Q$Config{prefixexp}\E"
+      system $ENV{SHELL}, -c => "./configure --prefix \Q$Config{prefixexp}\E"
          and exit $? >> 8;
    }
 }
@@ -80,7 +82,7 @@ my $mm = MM->new({
        SUFFIX	=> '.gz',
 	            },
     depend => {
-       "AIO.c" => "libeio/eio.h libeio/eio.c libeio/config.h",
+       "AIO.c" => "libeio/eio.h libeio/xthread.h libeio/eio.c libeio/config.h",
     },
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
