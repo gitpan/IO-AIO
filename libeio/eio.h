@@ -9,10 +9,11 @@ typedef struct eio_req eio_req;
 typedef int (*eio_cb)(eio_req *req);
 
 #ifndef EIO_COMMON
-# define EIO_COMMON		\
-  eio_cb finish;		\
-  void (*destroy)(eio_req *req);\
-  void *data
+# define EIO_COMMON void *data
+#endif
+
+#ifndef EIO_STRUCT_STAT
+# define EIO_STRUCT_STAT struct stat
 #endif
 
 enum {
@@ -58,6 +59,8 @@ struct eio_req
   unsigned char flags; /* private */
   unsigned char pri; /* the priority */
 
+  eio_cb finish;
+  void (*destroy)(eio_req *req);
   void (*feed)(eio_req *req);
 
   EIO_COMMON;
@@ -67,7 +70,8 @@ struct eio_req
 
 enum {
   EIO_FLAG_CANCELLED = 0x01, /* request was cancelled */
-  EIO_FLAG_PTR2_FREE = 0x02, /* need to free(ptr2) */
+  EIO_FLAG_PTR1_FREE = 0x02, /* need to free(ptr1) */
+  EIO_FLAG_PTR2_FREE = 0x04  /* need to free(ptr2) */
 };
 
 enum {
@@ -76,7 +80,7 @@ enum {
 
   EIO_DEFAULT_PRI = 0,
   EIO_PRI_BIAS    = -EIO_PRI_MIN,
-  EIO_NUM_PRI     = EIO_PRI_MAX + EIO_PRI_BIAS + 1,
+  EIO_NUM_PRI     = EIO_PRI_MAX + EIO_PRI_BIAS + 1
 };
 
 /* returns < 0 on error, errno set
@@ -94,10 +98,6 @@ int eio_poll (void);
 void eio_set_max_poll_time (eio_tstamp nseconds);
 /* do not handle more then count requests in one call to eio_poll_cb */
 void eio_set_max_poll_reqs (unsigned int nreqs);
-/* when != 0, then eio_submit blocks as long as nready > count */
-void eio_set_max_outstanding (unsigned int maxreqs);
-/* set maxinum number of idle threads */
-void eio_set_max_idle (unsigned int nthreads);
 
 /* set minimum required number
  * maximum wanted number
@@ -114,13 +114,16 @@ unsigned int eio_nthreads (void); /* number of worker threads in use currently *
 /*****************************************************************************/
 /* high-level request API */
 
+eio_req *eio_nop       (eio_cb cb); /* does nothing except go through the whole process */
+eio_req *eio_busy      (eio_tstamp delay, eio_cb cb); /* ties a thread for this long, simulating busyness */
+eio_req *eio_sync      (eio_cb cb);
 eio_req *eio_fsync     (int fd, eio_cb cb);
 eio_req *eio_fdatasync (int fd, eio_cb cb);
-eio_req *eio_dupclose  (int fd, eio_cb cb);
+eio_req *eio_close     (int fd, eio_cb cb);
 eio_req *eio_readahead (int fd, off_t offset, size_t length, eio_cb cb);
-eio_req *eio_read      (int fd, off_t offs, size_t length, char *data, eio_cb cb);
-eio_req *eio_write     (int fd, off_t offs, size_t length, char *data, eio_cb cb);
-eio_req *eio_fstat     (int fd, eio_cb cb); /* stat buffer=ptr2 allocates dynamically */
+eio_req *eio_read      (int fd, void *data, size_t length, off_t offset, eio_cb cb);
+eio_req *eio_write     (int fd, void *data, size_t length, off_t offset, eio_cb cb);
+eio_req *eio_fstat     (int fd, eio_cb cb); /* stat buffer=ptr2 allocated dynamically */
 eio_req *eio_futime    (int fd, eio_tstamp atime, eio_tstamp mtime, eio_cb cb);
 eio_req *eio_ftruncate (int fd, off_t offset, eio_cb cb);
 eio_req *eio_fchmod    (int fd, mode_t mode, eio_cb cb);
@@ -128,20 +131,21 @@ eio_req *eio_fchown    (int fd, uid_t uid, gid_t gid, eio_cb cb);
 eio_req *eio_dup2      (int fd, int fd2, eio_cb cb);
 eio_req *eio_sendfile  (int out_fd, int in_fd, off_t in_offset, size_t length, eio_cb cb);
 eio_req *eio_open      (const char *path, int flags, mode_t mode, eio_cb cb);
-eio_req *eio_readlink  (const char *path, eio_cb cb); /* result=ptr2 allocated dynamically */
-eio_req *eio_stat      (const char *path, eio_cb cb); /* stat buffer=ptr2 allocates dynamically */
-eio_req *eio_lstat     (const char *path, eio_cb cb); /* stat buffer=ptr2 allocates dynamically */
 eio_req *eio_utime     (const char *path, eio_tstamp atime, eio_tstamp mtime, eio_cb cb);
 eio_req *eio_truncate  (const char *path, off_t offset, eio_cb cb);
+eio_req *eio_chown     (const char *path, uid_t uid, gid_t gid, eio_cb cb);
 eio_req *eio_chmod     (const char *path, mode_t mode, eio_cb cb);
 eio_req *eio_mkdir     (const char *path, mode_t mode, eio_cb cb);
-eio_req *eio_chown     (const char *path, uid_t uid, gid_t gid, eio_cb cb);
-eio_req *eio_unlink    (const char *path, eio_cb cb);
-eio_req *eio_rmdir     (const char *path, eio_cb cb);
 eio_req *eio_readdir   (const char *path, eio_cb cb); /* result=ptr2 allocated dynamically */
+eio_req *eio_rmdir     (const char *path, eio_cb cb);
+eio_req *eio_unlink    (const char *path, eio_cb cb);
+eio_req *eio_readlink  (const char *path, eio_cb cb); /* result=ptr2 allocated dynamically */
+eio_req *eio_stat      (const char *path, eio_cb cb); /* stat buffer=ptr2 allocated dynamically */
+eio_req *eio_lstat     (const char *path, eio_cb cb); /* stat buffer=ptr2 allocated dynamically */
 eio_req *eio_mknod     (const char *path, mode_t mode, dev_t dev, eio_cb cb);
-eio_req *eio_busy      (eio_tstamp delay, eio_cb cb); /* ties a thread for this long, simulating busyness */
-eio_req *eio_nop       (eio_cb cb); /* does nothing except go through the whole process */
+eio_req *eio_link      (const char *path, const char *new_path, eio_cb cb);
+eio_req *eio_symlink   (const char *path, const char *new_path, eio_cb cb);
+eio_req *eio_rename    (const char *path, const char *new_path, eio_cb cb);
 
 /* for groups */
 eio_req *eio_grp       (eio_cb cb);
@@ -149,6 +153,20 @@ void eio_grp_feed      (eio_req *grp, void (*feed)(eio_req *req), int limit);
 void eio_grp_limit     (eio_req *grp, int limit);
 void eio_grp_add       (eio_req *grp, eio_req *req);
 void eio_grp_cancel    (eio_req *grp); /* cancels all sub requests but not the group */
+
+/* cancel a request as soon fast as possible */
+void eio_cancel (eio_req *req);
+/* destroy a request that has never been submitted */
+void eio_destroy (eio_req *req);
+
+/* true if the request was cancelled, useful in the invoke callback */
+#define EIO_CANCELLED(req) ((req)->flags & EIO_FLAG_CANCELLED)
+
+#define EIO_RESULT(req)    ((req)->result)
+/* returns a pointer to the result buffer allocated by eio */
+#define EIO_BUF(req)       ((req)->ptr2)
+#define EIO_STAT_BUF(req)  ((EIO_STRUCT_STAT *)EIO_BUF(req))
+#define EIO_PATH(req)      ((char *)(req)->ptr1)
 
 /*****************************************************************************/
 /* low-level request API */
@@ -160,15 +178,13 @@ void eio_grp_cancel    (eio_req *grp); /* cancels all sub requests but not the g
   (req)->finish  = (finish_cb);		\
   (req)->destroy = (destroy_cb)
 
-/* true if the request was cancelled, useful in the invoke callback */
-#define EIO_CANCELLED(req) ((req)->flags & EIO_FLAG_CANCELLED)
-
 /* submit a request for execution */
 void eio_submit (eio_req *req);
-/* cancel a request as soon fast as possible */
-void eio_cancel (eio_req *req);
-/* destroy a request that has never been submitted */
-void eio_destroy (eio_req *req);
+
+/*****************************************************************************/
+/* convinience functions */
+
+ssize_t eio_sendfile_sync (int ofd, int ifd, off_t offset, size_t count);
 
 #endif
 

@@ -6,6 +6,12 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.02 Mon May 12 02:32:02 CEST 2008
+	- fix a memory leak on aio_readlink.
+        - bring back working fchmod.
+        - nop and busy now set result to 0.
+        - set errno to ENOMEM when allocation fails.
+
 3.01 Sun May 11 03:07:03 CEST 2008
 	- (libeio) make it compile on systems without readahead or readdir_r.
         - (libeio) improve configure check for readahead availability.

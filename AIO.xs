@@ -282,11 +282,7 @@ static int req_invoke (eio_req *req)
 
           case EIO_READLINK:
             if (req->result > 0)
-              {
-                SvCUR_set (req->sv2, req->result);
-                *SvEND (req->sv2) = 0;
-                PUSHs (req->sv2);
-              }
+              PUSHs (sv_2mortal (newSVpvn (req->ptr2, req->result)));
             break;
 
           case EIO_STAT:
@@ -666,14 +662,9 @@ aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
 	SV *data;
         dREQ;
 
-        data = newSV (NAME_MAX);
-        SvPOK_on (data);
-
         req->type = EIO_READLINK;
         req->sv1  = newSVsv (path);
         req->ptr1 = SvPVbyte_nolen (req->sv1);
-        req->sv2  = data;
-        req->ptr2 = SvPVbyte_nolen (data);
 
         REQ_SEND;
 }
@@ -721,17 +712,9 @@ aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
 {
 	dREQ;
 
-        req->ptr2 = malloc (sizeof (EIO_STRUCT_STAT));
-        if (!req->ptr2)
-          {
-            req_destroy (req);
-            croak ("out of memory during aio_stat statdata allocation");
-          }
-
-        req->flags |= EIO_FLAG_PTR2_FREE;
         req->sv1 = newSVsv (fh_or_path);
 
-        if (SvPOK (fh_or_path))
+        if (SvPOK (req->sv1))
           {
             req->type = ix;
             req->ptr1 = SvPVbyte_nolen (req->sv1);
@@ -755,7 +738,7 @@ aio_utime (SV8 *fh_or_path, SV *atime, SV *mtime, SV *callback=&PL_sv_undef)
         req->nv2 = SvOK (mtime) ? SvNV (mtime) : -1.;
         req->sv1 = newSVsv (fh_or_path);
 
-        if (SvPOK (fh_or_path))
+        if (SvPOK (req->sv1))
           {
             req->type = EIO_UTIME;
             req->ptr1 = SvPVbyte_nolen (req->sv1);
@@ -778,7 +761,7 @@ aio_truncate (SV8 *fh_or_path, SV *offset, SV *callback=&PL_sv_undef)
         req->sv1  = newSVsv (fh_or_path);
         req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
 
-        if (SvPOK (fh_or_path))
+        if (SvPOK (req->sv1))
           {
             req->type = EIO_TRUNCATE;
             req->ptr1 = SvPVbyte_nolen (req->sv1);
@@ -796,20 +779,24 @@ void
 aio_chmod (SV8 *fh_or_path, int mode, SV *callback=&PL_sv_undef)
 	ALIAS:
         aio_chmod  = EIO_CHMOD
-        aio_fchmod = EIO_FCHMOD
         aio_mkdir  = EIO_MKDIR
 	PPCODE:
 {
 	dREQ;
 
-        req->type = ix;
         req->int2 = mode;
         req->sv1  = newSVsv (fh_or_path);
 
-        if (ix == EIO_FCHMOD)
-          req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+        if (SvPOK (req->sv1))
+          {
+            req->type = ix;
+            req->ptr1 = SvPVbyte_nolen (req->sv1);
+          }
         else
-          req->ptr1 = SvPVbyte_nolen (req->sv1);
+          {
+            req->type = EIO_FCHMOD;
+            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+          }
 
         REQ_SEND;
 }
@@ -824,7 +811,7 @@ aio_chown (SV8 *fh_or_path, SV *uid, SV *gid, SV *callback=&PL_sv_undef)
         req->int3 = SvOK (gid) ? SvIV (gid) : -1;
         req->sv1  = newSVsv (fh_or_path);
 
-        if (SvPOK (fh_or_path))
+        if (SvPOK (req->sv1))
           {
             req->type = EIO_CHOWN;
             req->ptr1 = SvPVbyte_nolen (req->sv1);

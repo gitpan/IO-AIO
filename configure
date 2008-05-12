@@ -2710,10 +2710,9 @@ else
 int main(void)
 {
    int fd = 0;
-   off64_t offset = 1;
    size_t count = 2;
    ssize_t res;
-   res = readahead (fd, offset, count);
+   res = readahead (fd, 0, count);
    return 0;
 }
 
@@ -2752,11 +2751,6 @@ echo "${ECHO_T}$ac_cv_readahead" >&6; }
 test $ac_cv_readahead = yes &&
 cat >>confdefs.h <<\_ACEOF
 #define HAVE_READAHEAD 1
-_ACEOF
-
-test $ac_cv_readahead = yes &&
-cat >>confdefs.h <<\_ACEOF
-#define _GNU_SOURCE 1
 _ACEOF
 
 
