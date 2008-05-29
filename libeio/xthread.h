@@ -37,13 +37,11 @@ typedef int ssize_t;
 
 typedef pthread_mutex_t mutex_t;
 #define X_MUTEX_INIT           PTHREAD_MUTEX_INITIALIZER
-#define X_MUTEX_CHECK(mutex)   
 #define X_LOCK(mutex)          pthread_mutex_lock (&(mutex))
 #define X_UNLOCK(mutex)        pthread_mutex_unlock (&(mutex))
 
 typedef pthread_cond_t cond_t;
 #define X_COND_INIT                     PTHREAD_COND_INITIALIZER
-#define X_COND_CHECK(cond)              
 #define X_COND_SIGNAL(cond)             pthread_cond_signal (&(cond))
 #define X_COND_WAIT(cond,mutex)         pthread_cond_wait (&(cond), &(mutex))
 #define X_COND_TIMEDWAIT(cond,mutex,to) pthread_cond_timedwait (&(cond), &(mutex), &(to))
@@ -55,12 +53,17 @@ typedef pthread_t thread_t;
 static int
 thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
 {
+  int retval;
   pthread_attr_t attr;
 
   pthread_attr_init (&attr);
   pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_DETACHED);
 
-  return pthread_create (tid, &attr, proc, arg) == 0;
+  retval = pthread_create (tid, &attr, proc, arg) == 0;
+
+  pthread_attr_destroy (&attr);
+
+  return retval;
 }
 
 #define respipe_read(a,b,c)  PerlSock_recv ((a), (b), (c), 0)
@@ -110,6 +113,11 @@ typedef pthread_t thread_t;
 #define X_THREAD_PROC(name) static void *name (void *thr_arg)
 #define X_THREAD_ATFORK(prepare,parent,child) pthread_atfork (prepare, parent, child)
 
+// the broken bsd's once more
+#ifndef PTHREAD_STACK_MIN
+# define PTHREAD_STACK_MIN 0
+#endif
+
 static int
 thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
 {
@@ -130,6 +138,8 @@ thread_create (thread_t *tid, void *(*proc)(void *), void *arg)
   pthread_sigmask (SIG_SETMASK, &fullsigset, &oldsigset);
   retval = pthread_create (tid, &attr, proc, arg) == 0;
   pthread_sigmask (SIG_SETMASK, &oldsigset, 0);
+
+  pthread_attr_destroy (&attr);
 
   return retval;
 }

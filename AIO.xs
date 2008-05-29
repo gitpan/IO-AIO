@@ -82,11 +82,13 @@ typedef SV SV8; /* byte-sv, used for argument-checking */
 #define AIO_REQ_KLASS "IO::AIO::REQ"
 #define AIO_GRP_KLASS "IO::AIO::GRP"
 
-#define EIO_COMMON	\
+#define EIO_REQ_MEMBERS	\
   SV *callback;		\
   SV *sv1, *sv2;	\
   STRLEN stroffset;	\
-  SV *self
+  SV *self;
+
+#define EIO_NO_WRAPPERS 1
 
 #include "libeio/eio.h"
 
@@ -107,7 +109,7 @@ typedef eio_req *aio_req;
 typedef eio_req *aio_req_ornot;
 
 static SV *on_next_submit;
-static int next_pri = EIO_DEFAULT_PRI + EIO_PRI_BIAS;
+static int next_pri = EIO_PRI_DEFAULT;
 static int max_outstanding;
 
 static int respipe_osf [2], respipe [2] = { -1, -1 };
@@ -412,7 +414,7 @@ static void poll_wait (void)
       if (size)
         return;
 
-      maybe_start_thread ();
+      etp_maybe_start_thread ();
 
       FD_ZERO (&rfd);
       FD_SET (respipe [0], &rfd);
@@ -423,18 +425,18 @@ static void poll_wait (void)
 
 static int poll_cb (void)
 {
-  int res;
-
-  do 
+  for (;;)
     {
-      res = eio_poll ();
+      int res = eio_poll ();
 
       if (res > 0)
         croak (0);
-    }
-  while (max_outstanding && max_outstanding <= eio_nreqs ());
 
-  return res;
+      if (!max_outstanding || max_outstanding > eio_nreqs ())
+        return res;
+
+      poll_wait ();
+    }
 }
 
 static void atfork_child (void)
@@ -445,7 +447,7 @@ static void atfork_child (void)
 #define dREQ							\
   aio_req req;							\
   int req_pri = next_pri;					\
-  next_pri = EIO_DEFAULT_PRI + EIO_PRI_BIAS;			\
+  next_pri = EIO_PRI_DEFAULT;					\
 								\
   if (SvOK (callback) && !SvROK (callback))			\
     croak ("callback must be undef or of reference type");	\
@@ -476,16 +478,7 @@ BOOT:
         newCONSTSUB (stash, "O_WRONLY", newSViv (O_WRONLY));
         newCONSTSUB (stash, "O_CREAT",  newSViv (O_CREAT));
         newCONSTSUB (stash, "O_TRUNC",  newSViv (O_TRUNC));
-#ifdef _WIN32
-        X_MUTEX_CHECK (wrklock);
-        X_MUTEX_CHECK (reslock);
-        X_MUTEX_CHECK (reqlock);
-        X_MUTEX_CHECK (reqwait);
-        X_MUTEX_CHECK (preadwritelock);
-        X_MUTEX_CHECK (readdirlock);
-
-	X_COND_CHECK  (reqwait);
-#else
+#ifndef _WIN32
         newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
 #endif
 
@@ -919,12 +912,12 @@ int
 aioreq_pri (int pri = 0)
 	PROTOTYPE: ;$
 	CODE:
-	RETVAL = next_pri - EIO_PRI_BIAS;
+	RETVAL = next_pri;
 	if (items > 0)
 	  {
 	    if (pri < EIO_PRI_MIN) pri = EIO_PRI_MIN;
 	    if (pri > EIO_PRI_MAX) pri = EIO_PRI_MAX;
-	    next_pri = pri + EIO_PRI_BIAS;
+	    next_pri = pri;
 	  }
 	OUTPUT:
 	RETVAL
@@ -935,7 +928,7 @@ aioreq_nice (int nice = 0)
 	nice = next_pri - nice;
 	if (nice < EIO_PRI_MIN) nice = EIO_PRI_MIN;
 	if (nice > EIO_PRI_MAX) nice = EIO_PRI_MAX;
-	next_pri = nice + EIO_PRI_BIAS;
+	next_pri = nice;
 
 void
 flush ()
@@ -1006,9 +999,7 @@ int
 nthreads()
 	PROTOTYPE:
 	CODE:
-        if (WORDACCESS_UNSAFE) X_LOCK   (wrklock);
-        RETVAL = started;
-        if (WORDACCESS_UNSAFE) X_UNLOCK (wrklock);
+        RETVAL = eio_nthreads ();
 	OUTPUT:
 	RETVAL
 

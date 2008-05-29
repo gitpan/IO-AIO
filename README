@@ -749,13 +749,15 @@ FUNCTIONS
 
     IO::AIO::poll_cb
         Process some outstanding events on the result pipe. You have to call
-        this regularly. Returns the number of events processed. Returns
-        immediately when no events are outstanding. The amount of events
-        processed depends on the settings of "IO::AIO::max_poll_req" and
+        this regularly. Returns 0 if all events could be processed, or -1 if
+        it returned earlier for whatever reason. Returns immediately when no
+        events are outstanding. The amount of events processed depends on
+        the settings of "IO::AIO::max_poll_req" and
         "IO::AIO::max_poll_time".
 
         If not all requests were processed for whatever reason, the
-        filehandle will still be ready when "poll_cb" returns.
+        filehandle will still be ready when "poll_cb" returns, so normally
+        you don't have to do anything special to have it called later.
 
         Example: Install an Event watcher that automatically calls
         IO::AIO::poll_cb with high priority:

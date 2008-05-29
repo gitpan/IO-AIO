@@ -6,6 +6,13 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.03 Thu May 29 05:33:30 CEST 2008
+	- (libeio) correctly call pthread_attr_destroy ().
+        - (libeio) work around broken bsd headers once more.
+        - reduce shared library size again by not including wrappers.
+        - max_outstanding could cause poll to enter a busy-waiting loop.
+        - document the new IO::AIO::poll_cb result value.
+
 3.02 Mon May 12 02:32:02 CEST 2008
 	- fix a memory leak on aio_readlink.
         - bring back working fchmod.

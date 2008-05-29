@@ -17,7 +17,7 @@ if ($^O =~ /win32/i or $^O =~ /mswin/) {
 } else {
 
    $INC  = "";
-   $LIBS = ['-lpthread -lrt', '-lpthread', '-lpthreads', '-lpthreadVC2', ''];
+   $LIBS = ['-lpthread', '-lpthreads', '-lpthreadVC2', ''];
 
    if ($^O =~ /freebsd/i) {
       print <<EOF;

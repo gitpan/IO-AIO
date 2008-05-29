@@ -195,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.02';
+   our $VERSION = '3.03';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
@@ -1119,12 +1119,14 @@ See C<poll_cb> for an example.
 =item IO::AIO::poll_cb
 
 Process some outstanding events on the result pipe. You have to call this
-regularly. Returns the number of events processed. Returns immediately
-when no events are outstanding. The amount of events processed depends on
-the settings of C<IO::AIO::max_poll_req> and C<IO::AIO::max_poll_time>.
+regularly. Returns C<0> if all events could be processed, or C<-1> if it
+returned earlier for whatever reason. Returns immediately when no events
+are outstanding. The amount of events processed depends on the settings of
+C<IO::AIO::max_poll_req> and C<IO::AIO::max_poll_time>.
 
 If not all requests were processed for whatever reason, the filehandle
-will still be ready when C<poll_cb> returns.
+will still be ready when C<poll_cb> returns, so normally you don't have to
+do anything special to have it called later.
 
 Example: Install an Event watcher that automatically calls
 IO::AIO::poll_cb with high priority:
