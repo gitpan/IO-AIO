@@ -21,9 +21,6 @@
 /* readahead(2) is available (linux) */
 #undef HAVE_READAHEAD
 
-/* readdir_r is available */
-#undef HAVE_READDIR_R
-
 /* sendfile(2) is available and supported */
 #undef HAVE_SENDFILE
 

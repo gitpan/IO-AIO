@@ -6,6 +6,14 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.04 Wed Jun 18 01:35:38 CEST 2008
+	- (libeio) fix eio_mknod, which confused it's arguments.
+	- (libeio) do not use readdir_r, as Ulrich Drepper pointed out that this
+          is stupid.
+        - (libeio) fix eio__readahead prototype, patch by Jost Krieger.
+        - (libeio) fix a bug that could potentially cause IO::AIO
+          not to get initialised properly.
+
 3.03 Thu May 29 05:33:30 CEST 2008
 	- (libeio) correctly call pthread_attr_destroy ().
         - (libeio) work around broken bsd headers once more.

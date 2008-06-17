@@ -195,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.03';
+   our $VERSION = '3.04';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir

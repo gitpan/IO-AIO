@@ -316,16 +316,10 @@ static void etp_atfork_prepare (void)
 #if !HAVE_PREADWRITE
   X_LOCK (preadwritelock);
 #endif
-#if !HAVE_READDIR_R
-  X_LOCK (readdirlock);
-#endif
 }
 
 static void etp_atfork_parent (void)
 {
-#if !HAVE_READDIR_R
-  X_UNLOCK (readdirlock);
-#endif
 #if !HAVE_PREADWRITE
   X_UNLOCK (preadwritelock);
 #endif
@@ -379,6 +373,8 @@ etp_init (void (*want_poll)(void), void (*done_poll)(void))
 
   want_poll_cb = want_poll;
   done_poll_cb = done_poll;
+
+  return 0;
 }
 
 X_THREAD_PROC (etp_proc);
@@ -783,7 +779,7 @@ static int eio__futimes (int fd, const struct timeval tv[2])
 # define readahead(fd,offset,count) eio__readahead (fd, offset, count, self)
 
 static ssize_t
-eio__readahead (int fd, off_t offset, size_t count, worker *self)
+eio__readahead (int fd, off_t offset, size_t count, etp_worker *self)
 {
   size_t todo = count;
   dBUF;
@@ -801,37 +797,6 @@ eio__readahead (int fd, off_t offset, size_t count, worker *self)
   return count;
 }
 
-#endif
-
-#if !HAVE_READDIR_R
-# define readdir_r eio__readdir_r
-
-static mutex_t readdirlock = X_MUTEX_INIT;
-  
-static int
-eio__readdir_r (DIR *dirp, EIO_STRUCT_DIRENT *ent, EIO_STRUCT_DIRENT **res)
-{
-  EIO_STRUCT_DIRENT *e;
-  int errorno;
-
-  X_LOCK (readdirlock);
-
-  e = readdir (dirp);
-  errorno = errno;
-
-  if (e)
-    {
-      *res = ent;
-      strcpy (ent->d_name, e->d_name);
-    }
-  else
-    *res = 0;
-
-  X_UNLOCK (readdirlock);
-
-  errno = errorno;
-  return e ? 0 : -1;
-}
 #endif
 
 /* sendfile always needs emulation */
@@ -933,11 +898,6 @@ static void
 eio__scandir (eio_req *req, etp_worker *self)
 {
   DIR *dirp;
-  union
-  {    
-    EIO_STRUCT_DIRENT d;
-    char b [offsetof (EIO_STRUCT_DIRENT, d_name) + NAME_MAX + 1];
-  } *u;
   EIO_STRUCT_DIRENT *entp;
   char *name, *names;
   int memlen = 4096;
@@ -946,16 +906,15 @@ eio__scandir (eio_req *req, etp_worker *self)
 
   X_LOCK (wrklock);
   self->dirp = dirp = opendir (req->ptr1);
-  self->dbuf = u = malloc (sizeof (*u));
   req->flags |= EIO_FLAG_PTR2_FREE;
   req->ptr2 = names = malloc (memlen);
   X_UNLOCK (wrklock);
 
-  if (dirp && u && names)
+  if (dirp && names)
     for (;;)
       {
         errno = 0;
-        readdir_r (dirp, &u->d, &entp);
+        entp = readdir (dirp);
 
         if (!entp)
           break;
@@ -1084,7 +1043,7 @@ quit:
 
 int eio_init (void (*want_poll)(void), void (*done_poll)(void))
 {
-  etp_init (want_poll, done_poll);
+  return etp_init (want_poll, done_poll);
 }
 
 static void eio_api_destroy (eio_req *req)
@@ -1156,7 +1115,7 @@ static void eio_execute (etp_worker *self, eio_req *req)
       case EIO_RENAME:    req->result = rename    (req->ptr1, req->ptr2); break;
       case EIO_LINK:      req->result = link      (req->ptr1, req->ptr2); break;
       case EIO_SYMLINK:   req->result = symlink   (req->ptr1, req->ptr2); break;
-      case EIO_MKNOD:     req->result = mknod     (req->ptr1, (mode_t)req->int2, (dev_t)req->offs); break;
+      case EIO_MKNOD:     req->result = mknod     (req->ptr1, (mode_t)req->int2, (dev_t)req->int3); break;
 
       case EIO_READLINK:  ALLOC (NAME_MAX);
                           req->result = readlink  (req->ptr1, req->ptr2, NAME_MAX); break;
@@ -1373,7 +1332,7 @@ eio_req *eio_readdir (const char *path, int pri, eio_cb cb, void *data)
 
 eio_req *eio_mknod (const char *path, mode_t mode, dev_t dev, int pri, eio_cb cb, void *data)
 {
-  REQ (EIO_MKNOD); PATH; req->int2 = (long)mode; req->int2 = (long)dev; SEND;
+  REQ (EIO_MKNOD); PATH; req->int2 = (long)mode; req->int3 = (long)dev; SEND;
 }
 
 static eio_req *
