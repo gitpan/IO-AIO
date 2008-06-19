@@ -67,6 +67,12 @@
 
 #endif
 
+/* perl stupidly overrides readdir and maybe others */
+/* with thread-unsafe versions, imagine that :( */
+#undef readdir
+#undef opendir
+#undef closedir
+
 #define EIO_STRUCT_STAT Stat_t
 
 /* use NV for 32 bit perls as it allows larger offsets */

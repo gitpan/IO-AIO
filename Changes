@@ -6,6 +6,10 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.05 Thu Jun 19 23:23:52 CEST 2008
+	- work around perl overriding readdir etc. with thread-unsafe
+          (sic!) versions.
+
 3.04 Wed Jun 18 01:35:38 CEST 2008
 	- (libeio) fix eio_mknod, which confused it's arguments.
 	- (libeio) do not use readdir_r, as Ulrich Drepper pointed out that this
