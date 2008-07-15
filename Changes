@@ -6,6 +6,11 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.06 Tue Jul 15 12:41:32 CEST 2008
+	- move preadwritelock definition before it's first reference,
+          to make it compile again on broken platforms (they still exist)
+          or badly cofngiured perls (redhat...), reported by Rob Bloodgood.
+
 3.05 Thu Jun 19 23:23:52 CEST 2008
 	- work around perl overriding readdir etc. with thread-unsafe
           (sic!) versions.
