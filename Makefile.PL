@@ -47,7 +47,6 @@ EOF
       $ENV{CPPFLAGS} = $Config{cppflags};
       $ENV{CFLAGS}   = $Config{ccflags};
       $ENV{LDFLAGS}  = $Config{ldflags};
-      $ENV{LIBS}     = $Config{libs};
       $ENV{LINKER}   = $Config{ld}; # nonstandard
 
       system $ENV{SHELL}, -c => "./configure --prefix \Q$Config{prefixexp}\E"
