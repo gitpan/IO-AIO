@@ -195,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.07';
+   our $VERSION = '3.1';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
@@ -226,7 +226,7 @@ with the same name (sans C<aio_>). The arguments are similar or identical,
 and they all accept an additional (and optional) C<$callback> argument
 which must be a code reference. This code reference will get called with
 the syscall return code (e.g. most syscalls return C<-1> on error, unlike
-perl, which usually delivers "false") as it's sole argument when the given
+perl, which usually delivers "false") as its sole argument after the given
 syscall has been executed asynchronously.
 
 All functions expecting a filehandle keep a copy of the filehandle
@@ -250,7 +250,7 @@ environment, d) use Glib::filename_from_unicode on unicode filenames or e)
 use something else to ensure your scalar has the correct contents.
 
 This works, btw. independent of the internal UTF-8 bit, which IO::AIO
-handles correctly wether it is set or not.
+handles correctly whether it is set or not.
 
 =over 4
 
@@ -567,7 +567,7 @@ Try to copy the I<file> (directories not supported as either source or
 destination) from C<$srcpath> to C<$dstpath> and call the callback with
 the C<0> (error) or C<-1> ok.
 
-This is a composite request that it creates the destination file with
+This is a composite request that creates the destination file with
 mode 0200 and copies the contents of the source file into it using
 C<aio_sendfile>, followed by restoring atime, mtime, access mode and
 uid/gid, in that order.
@@ -860,7 +860,7 @@ detected, it will be emulated by calling C<fsync> instead.
 =item aio_pathsync $path, $callback->($status)
 
 This request tries to open, fsync and close the given path. This is a
-composite request intended tosync directories after directory operations
+composite request intended to sync directories after directory operations
 (E.g. rename). This might not work on all operating systems or have any
 specific effect, but usually it makes sure that directory changes get
 written to disc. It works for anything that can be opened for read-only,
@@ -1015,10 +1015,11 @@ will finish very quickly. If they contain only requests that are in the
 C<done> state, they will also finish. Otherwise they will continue to
 exist.
 
-That means after creating a group you have some time to add requests. And
-in the callbacks of those requests, you can add further requests to the
-group. And only when all those requests have finished will the the group
-itself finish.
+That means after creating a group you have some time to add requests
+(precisely before the callback has been invoked, which is only done within
+the C<poll_cb>). And in the callbacks of those requests, you can add
+further requests to the group. And only when all those requests have
+finished will the the group itself finish.
 
 =over 4
 

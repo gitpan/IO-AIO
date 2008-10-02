@@ -6,6 +6,17 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.1  Thu Oct  2 13:34:40 CEST 2008
+	- pre-deref the passed callback object, for increased speed
+          and decreased memory usage.
+	- call on_next_submit callback even for aio_group - impact unknown,
+          but seems more correct.
+        - $req->cb now returns the original callback.
+        - (libeio) pass EIO_GROUP/aio_group requests through the queue without
+          requiring a thread switch.
+        - (libeio) status code of aio_futime and aio_utime was always passed 0.
+        - do some other µ-optimisations.
+
 3.07 Sat Aug  2 16:06:13 CEST 2008
 	- do not include LIBS in autoconf tests.
 

@@ -122,6 +122,17 @@
 
 /*****************************************************************************/
 
+#if __GNUC__ >= 3
+# define expect(expr,value) __builtin_expect ((expr),(value))
+#else
+# define expect(expr,value) (expr)
+#endif
+
+#define expect_false(expr) expect ((expr) != 0, 0)
+#define expect_true(expr)  expect ((expr) != 0, 1)
+
+/*****************************************************************************/
+
 #define ETP_PRI_MIN EIO_PRI_MIN
 #define ETP_PRI_MAX EIO_PRI_MAX
 
@@ -413,11 +424,11 @@ static void etp_start_thread (void)
 
 static void etp_maybe_start_thread (void)
 {
-  if (etp_nthreads () >= wanted)
+  if (expect_true (etp_nthreads () >= wanted))
     return;
   
   /* todo: maybe use idle here, but might be less exact */
-  if (0 <= (int)etp_nthreads () + (int)etp_npending () - (int)etp_nreqs ())
+  if (expect_true (0 <= (int)etp_nthreads () + (int)etp_npending () - (int)etp_nreqs ()))
     return;
 
   etp_start_thread ();
@@ -480,7 +491,7 @@ static int etp_poll (void)
       --nreqs;
       X_UNLOCK (reqlock);
 
-      if (req->type == EIO_GROUP && req->size)
+      if (expect_false (req->type == EIO_GROUP && req->size))
         {
           req->int1 = 1; /* mark request as delayed */
           continue;
@@ -488,11 +499,11 @@ static int etp_poll (void)
       else
         {
           int res = ETP_FINISH (req);
-          if (res)
+          if (expect_false (res))
             return res;
         }
 
-      if (maxreqs && !--maxreqs)
+      if (expect_false (maxreqs && !--maxreqs))
         break;
 
       if (maxtime)
@@ -521,17 +532,36 @@ static void etp_submit (ETP_REQ *req)
 {
   req->pri -= ETP_PRI_MIN;
 
-  if (req->pri < ETP_PRI_MIN - ETP_PRI_MIN) req->pri = ETP_PRI_MIN - ETP_PRI_MIN;
-  if (req->pri > ETP_PRI_MAX - ETP_PRI_MIN) req->pri = ETP_PRI_MAX - ETP_PRI_MIN;
+  if (expect_false (req->pri < ETP_PRI_MIN - ETP_PRI_MIN)) req->pri = ETP_PRI_MIN - ETP_PRI_MIN;
+  if (expect_false (req->pri > ETP_PRI_MAX - ETP_PRI_MIN)) req->pri = ETP_PRI_MAX - ETP_PRI_MIN;
 
-  X_LOCK (reqlock);
-  ++nreqs;
-  ++nready;
-  reqq_push (&req_queue, req);
-  X_COND_SIGNAL (reqwait);
-  X_UNLOCK (reqlock);
+  if (expect_false (req->type == EIO_GROUP))
+    {
+      /* I hope this is worth it :/ */
+      X_LOCK (reqlock);
+      ++nreqs;
+      X_UNLOCK (reqlock);
 
-  etp_maybe_start_thread ();
+      X_LOCK (reslock);
+
+      ++npending;
+
+      if (!reqq_push (&res_queue, req) && want_poll_cb)
+        want_poll_cb ();
+
+      X_UNLOCK (reslock);
+    }
+  else
+    {
+      X_LOCK (reqlock);
+      ++nreqs;
+      ++nready;
+      reqq_push (&req_queue, req);
+      X_COND_SIGNAL (reqwait);
+      X_UNLOCK (reqlock);
+
+      etp_maybe_start_thread ();
+    }
 }
 
 static void etp_set_max_poll_time (double nseconds)
@@ -952,6 +982,35 @@ eio__scandir (eio_req *req, etp_worker *self)
   req->result = res;
 }
 
+#if !(_POSIX_MAPPED_FILES && _POSIX_SYNCHRONIZED_IO)
+# define msync(a,b,c) ENOSYS
+#endif
+
+int
+eio__mtouch (void *mem, size_t len, int flags)
+{
+  intptr_t addr = (intptr_t)mem;
+  intptr_t end = addr + len;
+#ifdef PAGESIZE
+  const intptr_t page = PAGESIZE;
+#else
+  static intptr_t page;
+
+  if (!page)
+    page = sysconf (_SC_PAGESIZE);
+#endif
+
+  addr &= ~(page - 1); /* assume page size is always a power of two */
+
+  if (addr < end)
+    if (flags) /* modify */
+      do { *((volatile sig_atomic_t *)addr) |= 0; } while ((addr += page) < len);
+    else
+      do { *((volatile sig_atomic_t *)addr)     ; } while ((addr += page) < len);
+
+  return 0;
+}
+
 /*****************************************************************************/
 
 #define ALLOC(len)				\
@@ -1126,6 +1185,8 @@ static void eio_execute (etp_worker *self, eio_req *req)
       case EIO_SYNC:      req->result = 0; sync (); break;
       case EIO_FSYNC:     req->result = fsync     (req->int1); break;
       case EIO_FDATASYNC: req->result = fdatasync (req->int1); break;
+      case EIO_MSYNC:     req->result = msync (req->ptr2, req->size, req->int1); break;
+      case EIO_MTOUCH:    req->result = eio__mtouch (req->ptr2, req->size, req->int1); break;
 
       case EIO_READDIR:   eio__scandir (req, self); break;
 
@@ -1167,14 +1228,17 @@ static void eio_execute (etp_worker *self, eio_req *req)
                         ? futimes (req->int1, times)
                         : utimes  (req->ptr1, times);
         }
+        break;
 
       case EIO_GROUP:
+        abort (); /* handled in eio_request */
+
       case EIO_NOP:
         req->result = 0;
         break;
 
       case EIO_CUSTOM:
-        req->feed (req);
+        ((void (*)(eio_req *))req->feed) (req);
         break;
 
       default:
@@ -1205,6 +1269,16 @@ eio_req *eio_sync (int pri, eio_cb cb, void *data)
 eio_req *eio_fsync (int fd, int pri, eio_cb cb, void *data)
 {
   REQ (EIO_FSYNC); req->int1 = fd; SEND;
+}
+
+eio_req *eio_msync (void *addr, size_t length, int flags, int pri, eio_cb cb, void *data)
+{
+  REQ (EIO_MSYNC); req->ptr2 = addr; req->size = length; req->int1 = flags; SEND;
+}
+
+eio_req *eio_mtouch (void *addr, size_t length, int flags, int pri, eio_cb cb, void *data)
+{
+  REQ (EIO_MTOUCH); req->ptr2 = addr; req->size = length; req->int1 = flags; SEND;
 }
 
 eio_req *eio_fdatasync (int fd, int pri, eio_cb cb, void *data)
@@ -1371,7 +1445,7 @@ eio_req *eio_rename (const char *path, const char *new_path, int pri, eio_cb cb,
 
 eio_req *eio_custom (eio_cb execute, int pri, eio_cb cb, void *data)
 {
-  REQ (EIO_CUSTOM); req->feed = execute; SEND;
+  REQ (EIO_CUSTOM); req->feed = (void (*)(eio_req *))execute; SEND;
 }
 
 #endif

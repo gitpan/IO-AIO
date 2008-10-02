@@ -177,8 +177,8 @@ FUNCTIONS
     identical, and they all accept an additional (and optional) $callback
     argument which must be a code reference. This code reference will get
     called with the syscall return code (e.g. most syscalls return -1 on
-    error, unlike perl, which usually delivers "false") as it's sole
-    argument when the given syscall has been executed asynchronously.
+    error, unlike perl, which usually delivers "false") as its sole argument
+    after the given syscall has been executed asynchronously.
 
     All functions expecting a filehandle keep a copy of the filehandle
     internally until the request has finished.
@@ -201,7 +201,7 @@ FUNCTIONS
     contents.
 
     This works, btw. independent of the internal UTF-8 bit, which IO::AIO
-    handles correctly wether it is set or not.
+    handles correctly whether it is set or not.
 
     $prev_pri = aioreq_pri [$pri]
         Returns the priority value that would be used for the next request
@@ -453,10 +453,10 @@ FUNCTIONS
         or destination) from $srcpath to $dstpath and call the callback with
         the 0 (error) or -1 ok.
 
-        This is a composite request that it creates the destination file
-        with mode 0200 and copies the contents of the source file into it
-        using "aio_sendfile", followed by restoring atime, mtime, access
-        mode and uid/gid, in that order.
+        This is a composite request that creates the destination file with
+        mode 0200 and copies the contents of the source file into it using
+        "aio_sendfile", followed by restoring atime, mtime, access mode and
+        uid/gid, in that order.
 
         If an error occurs, the partial destination file will be unlinked,
         if possible, except when setting atime, mtime, access mode and
@@ -546,7 +546,7 @@ FUNCTIONS
 
     aio_pathsync $path, $callback->($status)
         This request tries to open, fsync and close the given path. This is
-        a composite request intended tosync directories after directory
+        a composite request intended to sync directories after directory
         operations (E.g. rename). This might not work on all operating
         systems or have any specific effect, but usually it makes sure that
         directory changes get written to disc. It works for anything that
@@ -660,10 +660,11 @@ FUNCTIONS
     "done" state, they will also finish. Otherwise they will continue to
     exist.
 
-    That means after creating a group you have some time to add requests.
-    And in the callbacks of those requests, you can add further requests to
-    the group. And only when all those requests have finished will the the
-    group itself finish.
+    That means after creating a group you have some time to add requests
+    (precisely before the callback has been invoked, which is only done
+    within the "poll_cb"). And in the callbacks of those requests, you can
+    add further requests to the group. And only when all those requests have
+    finished will the the group itself finish.
 
     add $grp ...
     $grp->add (...)

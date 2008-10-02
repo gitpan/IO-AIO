@@ -82,6 +82,19 @@
 # define SvVAL64 SvNV
 #endif
 
+/*****************************************************************************/
+
+#if __GNUC__ >= 3
+# define expect(expr,value) __builtin_expect ((expr),(value))
+#else
+# define expect(expr,value) (expr)
+#endif
+
+#define expect_false(expr) expect ((expr) != 0, 0)
+#define expect_true(expr)  expect ((expr) != 0, 1)
+
+/*****************************************************************************/
+
 static HV *stash;
 typedef SV SV8; /* byte-sv, used for argument-checking */
 
@@ -183,7 +196,7 @@ static void req_submit (eio_req *req)
 {
   eio_submit (req);
 
-  if (on_next_submit)
+  if (expect_false (on_next_submit))
     {
       dSP;
       SV *cb = sv_2mortal (on_next_submit);
@@ -203,7 +216,7 @@ static int req_invoke (eio_req *req)
   if (req->flags & FLAG_SV2_RO_OFF)
     SvREADONLY_off (req->sv2);
 
-  if (!EIO_CANCELLED (req) && SvOK (req->callback))
+  if (!EIO_CANCELLED (req) && req->callback)
     {
       ENTER;
       SAVETMPS;
@@ -450,23 +463,43 @@ static void atfork_child (void)
   create_respipe ();
 }
 
+static SV *
+get_cb (SV *cb_sv)
+{
+  HV *st;
+  GV *gvp;
+  CV *cv;
+
+  if (!SvOK (cb_sv))
+    return 0;
+
+  cv = sv_2cv (cb_sv, &st, &gvp, 0);
+
+  if (!cv)
+    croak ("IO::AIO callback must be undef or a CODE reference");
+
+  return (SV *)cv;
+}
+
 #define dREQ							\
+  SV *cb_cv;							\
   aio_req req;							\
   int req_pri = next_pri;					\
   next_pri = EIO_PRI_DEFAULT;					\
 								\
-  if (SvOK (callback) && !SvROK (callback))			\
-    croak ("callback must be undef or of reference type");	\
+  cb_cv = get_cb (callback);					\
 								\
   Newz (0, req, 1, eio_req);					\
   if (!req)							\
     croak ("out of memory during eio_req allocation");		\
 								\
-  req->callback = newSVsv (callback);				\
+  req->callback = SvREFCNT_inc (cb_cv);				\
   req->pri = req_pri
 
 #define REQ_SEND						\
+  PUTBACK;							\
   req_submit (req);						\
+  SPAGAIN;							\
 								\
   if (GIMME_V != G_VOID)					\
     XPUSHs (req_sv (req, AIO_REQ_KLASS));
@@ -639,7 +672,7 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
                                                     : IoOFP (sv_2io (fh)));
           req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
           req->size = len;
-          req->sv2  = SvREFCNT_inc (data);
+          req->sv2  = SvREFCNT_inc_NN (data);
           req->ptr2 = (char *)svptr + dataoffset;
           req->stroffset = dataoffset;
 
@@ -896,7 +929,7 @@ aio_group (SV *callback=&PL_sv_undef)
 
         req->type = EIO_GROUP;
 
-        eio_submit (req);
+        req_submit (req);
         XPUSHs (req_sv (req, AIO_GRP_KLASS));
 }
 
@@ -1025,9 +1058,19 @@ cancel (aio_req_ornot req)
 
 void
 cb (aio_req_ornot req, SV *callback=&PL_sv_undef)
-	CODE:
-        SvREFCNT_dec (req->callback);
-        req->callback = newSVsv (callback);
+	PPCODE:
+{
+        if (GIMME_V != G_VOID)
+          XPUSHs (req->callback ? sv_2mortal (newRV_inc (req->callback)) : &PL_sv_undef);
+
+        if (items > 1)
+          {
+            SV *cb_cv = get_cb (callback);
+
+            SvREFCNT_dec (req->callback);
+            req->callback = SvREFCNT_inc (cb_cv);
+          }
+}
 
 MODULE = IO::AIO                PACKAGE = IO::AIO::GRP
 
