@@ -6,6 +6,11 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.15 Mon Oct 13 00:39:55 CEST 2008
+	- automatic removal of feeders was broken.
+	- (libeio) use a more robust method to detect whether a feeder
+          has added something to the group or not.
+
 3.1  Thu Oct  2 13:34:40 CEST 2008
 	- pre-deref the passed callback object, for increased speed
           and decreased memory usage.

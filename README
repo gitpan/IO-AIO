@@ -467,9 +467,9 @@ FUNCTIONS
         or destination) from $srcpath to $dstpath and call the callback with
         the 0 (error) or -1 ok.
 
-        This is a composite request that tries to rename(2) the file first.
-        If rename files with "EXDEV", it copies the file with "aio_copy"
-        and, if that is successful, unlinking the $srcpath.
+        This is a composite request that tries to rename(2) the file first;
+        if rename fails with "EXDEV", it copies the file with "aio_copy"
+        and, if that is successful, unlinks the $srcpath.
 
     aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
         Scans a directory (similar to "aio_readdir") but additionally tries
@@ -717,7 +717,8 @@ FUNCTIONS
         If the feed does not queue more requests when called, it will be
         automatically removed from the group.
 
-        If the feed limit is 0, it will be set to 2 automatically.
+        If the feed limit is 0 when this method is called, it will be set to
+        2 automatically.
 
         Example:
 
@@ -737,6 +738,9 @@ FUNCTIONS
         whenever the group contains less than this many requests.
 
         Setting the limit to 0 will pause the feeding process.
+
+        The default value for the limit is 0, but note that setting a feeder
+        automatically bumps it up to 2.
 
   SUPPORT FUNCTIONS
    EVENT PROCESSING AND EVENT LOOP INTEGRATION

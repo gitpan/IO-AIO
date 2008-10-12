@@ -195,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.1';
+   our $VERSION = '3.15';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
@@ -633,9 +633,9 @@ Try to move the I<file> (directories not supported as either source or
 destination) from C<$srcpath> to C<$dstpath> and call the callback with
 the C<0> (error) or C<-1> ok.
 
-This is a composite request that tries to rename(2) the file first. If
-rename files with C<EXDEV>, it copies the file with C<aio_copy> and, if
-that is successful, unlinking the C<$srcpath>.
+This is a composite request that tries to rename(2) the file first; if
+rename fails with C<EXDEV>, it copies the file with C<aio_copy> and, if
+that is successful, unlinks the C<$srcpath>.
 
 =cut
 
@@ -1062,9 +1062,9 @@ before the call to C<result>, or call c<errno> after it.
 Sets a feeder/generator on this group: every group can have an attached
 generator that generates requests if idle. The idea behind this is that,
 although you could just queue as many requests as you want in a group,
-this might starve other requests for a potentially long time.  For
-example, C<aio_scandir> might generate hundreds of thousands C<aio_stat>
-requests, delaying any later requests for a long time.
+this might starve other requests for a potentially long time. For example,
+C<aio_scandir> might generate hundreds of thousands C<aio_stat> requests,
+delaying any later requests for a long time.
 
 To avoid this, and allow incremental generation of requests, you can
 instead a group and set a feeder on it that generates those requests. The
@@ -1078,7 +1078,8 @@ not impose any limits).
 If the feed does not queue more requests when called, it will be
 automatically removed from the group.
 
-If the feed limit is C<0>, it will be set to C<2> automatically.
+If the feed limit is C<0> when this method is called, it will be set to
+C<2> automatically.
 
 Example:
 
@@ -1099,6 +1100,9 @@ Sets the feeder limit for the group: The feeder will be called whenever
 the group contains less than this many requests.
 
 Setting the limit to C<0> will pause the feeding process.
+
+The default value for the limit is C<0>, but note that setting a feeder
+automatically bumps it up to C<2>.
 
 =back
 

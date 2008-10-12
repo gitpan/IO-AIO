@@ -113,8 +113,6 @@ typedef SV SV8; /* byte-sv, used for argument-checking */
 
 static int req_invoke    (eio_req *req);
 #define EIO_FINISH(req)  req_invoke (req)
-static void aio_grp_feed (eio_req *grp);
-#define EIO_FEED(req)    aio_grp_feed (req)
 static void req_destroy  (eio_req *grp);
 #define EIO_DESTROY(req) req_destroy (req)
 
@@ -1135,7 +1133,8 @@ feed (aio_req grp, SV *callback=&PL_sv_undef)
 	CODE:
 {
         SvREFCNT_dec (grp->sv2);
-        grp->sv2 = newSVsv (callback);
+        grp->sv2  = newSVsv (callback);
+        grp->feed = aio_grp_feed;
 
         if (grp->int2 <= 0)
           grp->int2 = 2;
