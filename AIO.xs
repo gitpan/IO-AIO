@@ -670,7 +670,7 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
                                                     : IoOFP (sv_2io (fh)));
           req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
           req->size = len;
-          req->sv2  = SvREFCNT_inc_NN (data);
+          req->sv2  = SvREFCNT_inc (data);
           req->ptr2 = (char *)svptr + dataoffset;
           req->stroffset = dataoffset;
 

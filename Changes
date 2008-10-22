@@ -4,7 +4,12 @@ TODO: better autoconf.pm that can return LIBS etc.
 TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice/sync_file_range? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
+TODO: sync_file_range
 TODO: aio_fcntl, at least for file-locking
+
+3.16 Wed Oct 22 18:28:01 CEST 2008
+	- use SvREFCNT_inc instead of SvREFCNT_inc_NN in a non-speed critical
+          part to improve portability to perl 5.8 (reported by szymon).
 
 3.15 Mon Oct 13 00:39:55 CEST 2008
 	- automatic removal of feeders was broken.
