@@ -544,6 +544,18 @@ FUNCTIONS
         If this call isn't available because your OS lacks it or it couldn't
         be detected, it will be emulated by calling "fsync" instead.
 
+    aio_sync_file_range $fh, $offset, $nbytes, $flags, $callback->($status)
+        Sync the data portion of the file specified by $offset and $length
+        to disk (but NOT the metadata), by calling the Linux-specific
+        sync_file_range call. If sync_file_range is not available or it
+        returns ENOSYS, then fdatasync or fsync is being substituted.
+
+        $flags can be a combination of
+        "IO::AIO::SYNC_FILE_RANGE_WAIT_BEFORE",
+        "IO::AIO::SYNC_FILE_RANGE_WRITE" and
+        "IO::AIO::SYNC_FILE_RANGE_WAIT_AFTER": refer to the sync_file_range
+        manpage for details.
+
     aio_pathsync $path, $callback->($status)
         This request tries to open, fsync and close the given path. This is
         a composite request intended to sync directories after directory

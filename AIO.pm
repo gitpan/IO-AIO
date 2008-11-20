@@ -195,12 +195,12 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.16';
+   our $VERSION = '3.17';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
                      aio_scandir aio_symlink aio_readlink aio_sync aio_fsync
-                     aio_fdatasync aio_pathsync aio_readahead
+                     aio_fdatasync aio_sync_file_range aio_pathsync aio_readahead
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate);
@@ -210,6 +210,8 @@ BEGIN {
                        min_parallel max_parallel max_idle
                        nreqs nready npending nthreads
                        max_poll_time max_poll_reqs);
+
+   push @AIO_REQ, qw(aio_busy); # not exported
 
    @IO::AIO::GRP::ISA = 'IO::AIO::REQ';
 
@@ -856,6 +858,18 @@ callback with the fdatasync result code.
 
 If this call isn't available because your OS lacks it or it couldn't be
 detected, it will be emulated by calling C<fsync> instead.
+
+=item aio_sync_file_range $fh, $offset, $nbytes, $flags, $callback->($status)
+
+Sync the data portion of the file specified by C<$offset> and C<$length>
+to disk (but NOT the metadata), by calling the Linux-specific
+sync_file_range call. If sync_file_range is not available or it returns
+ENOSYS, then fdatasync or fsync is being substituted.
+
+C<$flags> can be a combination of C<IO::AIO::SYNC_FILE_RANGE_WAIT_BEFORE>,
+C<IO::AIO::SYNC_FILE_RANGE_WRITE> and
+C<IO::AIO::SYNC_FILE_RANGE_WAIT_AFTER>: refer to the sync_file_range
+manpage for details.
 
 =item aio_pathsync $path, $callback->($status)
 

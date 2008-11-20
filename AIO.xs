@@ -518,6 +518,10 @@ BOOT:
 #ifndef _WIN32
         newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
 #endif
+        newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
+        newCONSTSUB (stash, "SYNC_FILE_RANGE_WAIT_BEFORE", newSViv (EIO_SYNC_FILE_RANGE_WAIT_BEFORE));
+        newCONSTSUB (stash, "SYNC_FILE_RANGE_WRITE"      , newSViv (EIO_SYNC_FILE_RANGE_WRITE));
+        newCONSTSUB (stash, "SYNC_FILE_RANGE_WAIT_AFTER" , newSViv (EIO_SYNC_FILE_RANGE_WAIT_AFTER));
 
         create_respipe ();
 
@@ -593,6 +597,23 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
         req->type = ix;
         req->sv1  = newSVsv (fh);
         req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+
+        REQ_SEND (req);
+}
+
+void
+aio_sync_file_range (SV *fh, SV *offset, SV *nbytes, IV flags, SV *callback=&PL_sv_undef)
+	PROTOTYPE: $$$$;$
+	PPCODE:
+{
+        dREQ;
+
+        req->type = EIO_SYNC_FILE_RANGE;
+        req->sv1  = newSVsv (fh);
+        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->offs = SvVAL64 (offset);
+        req->size = SvVAL64 (nbytes);
+        req->int2 = flags;
 
         REQ_SEND (req);
 }
