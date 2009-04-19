@@ -6,6 +6,10 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.18 Sun Apr 19 21:17:32 CEST 2009
+	- better diagnostics when some aio_* functions get passed an illegal fh.
+        - try to avoid crashes due to incompatible 5.10 API changes. grmbl.
+
 3.17 Thu Nov 20 08:45:36 CET 2008
 	- (libeio) added aio_sync_file_range (untested).
         - add aio_busy to @IO::AIO::AIO_REQ.

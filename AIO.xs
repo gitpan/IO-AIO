@@ -501,7 +501,18 @@ get_cb (SV *cb_sv)
 								\
   if (GIMME_V != G_VOID)					\
     XPUSHs (req_sv (req, AIO_REQ_KLASS));
-	
+
+static int
+extract_fd (SV *fh, int wr)
+{
+  int fd = PerlIO_fileno (wr ? IoOFP (sv_2io (fh)) : IoIFP (sv_2io (fh)));
+
+  if (fd < 0)
+    croak ("illegal fh argument, either not an OS file or read/write mode mismatch");
+
+  return fd;
+}
+
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
 PROTOTYPES: ENABLE
@@ -592,11 +603,12 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
            aio_fdatasync = EIO_FDATASYNC
 	PPCODE:
 {
+  	int fd = extract_fd (fh, 0);
         dREQ;
 
         req->type = ix;
         req->sv1  = newSVsv (fh);
-        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->int1 = fd;
 
         REQ_SEND (req);
 }
@@ -606,11 +618,12 @@ aio_sync_file_range (SV *fh, SV *offset, SV *nbytes, IV flags, SV *callback=&PL_
 	PROTOTYPE: $$$$;$
 	PPCODE:
 {
+  	int fd = extract_fd (fh, 0);
         dREQ;
 
         req->type = EIO_SYNC_FILE_RANGE;
         req->sv1  = newSVsv (fh);
-        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->int1 = fd;
         req->offs = SvVAL64 (offset);
         req->size = SvVAL64 (nbytes);
         req->int2 = flags;
@@ -624,6 +637,7 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
         static int close_pipe = -1; /* dummy fd to close fds via dup2 */
+  	int fd = extract_fd (fh, 0);
         dREQ;
 
         if (close_pipe < 0)
@@ -641,7 +655,7 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
         req->type = EIO_DUP2;
         req->int1 = close_pipe;
         req->sv2  = newSVsv (fh);
-        req->int2 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->int2 = fd;
 
         REQ_SEND (req);
 }
@@ -655,11 +669,15 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
         PPCODE:
 {
         STRLEN svlen;
+        int fd = extract_fd (fh, ix == EIO_WRITE);
         char *svptr = SvPVbyte (data, svlen);
         UV len = SvUV (length);
 
+        if (SvTYPE (data) > SVt_PVMG || SvROK (data))
+          croak ("illegal data argument '%s', must be plain scalar string", SvPV_nolen (data));
+
         SvUPGRADE (data, SVt_PV);
-        SvPOK_on (data);
+        SvPOK_only (data);
 
         if (dataoffset < 0)
           dataoffset += svlen;
@@ -687,8 +705,7 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
 
           req->type = ix;
           req->sv1  = newSVsv (fh);
-          req->int1 = PerlIO_fileno (ix == EIO_READ ? IoIFP (sv_2io (fh))
-                                                    : IoOFP (sv_2io (fh)));
+          req->int1 = fd;
           req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
           req->size = len;
           req->sv2  = SvREFCNT_inc (data);
@@ -725,13 +742,15 @@ aio_sendfile (SV *out_fh, SV *in_fh, SV *in_offset, UV length, SV *callback=&PL_
 	PROTOTYPE: $$$$;$
         PPCODE:
 {
+  	int ifd = extract_fd (in_fh , 0);
+  	int ofd = extract_fd (out_fh, 0);
 	dREQ;
 
         req->type = EIO_SENDFILE;
         req->sv1  = newSVsv (out_fh);
-        req->int1 = PerlIO_fileno (IoIFP (sv_2io (out_fh)));
+        req->int1 = ofd;
         req->sv2  = newSVsv (in_fh);
-        req->int2 = PerlIO_fileno (IoIFP (sv_2io (in_fh)));
+        req->int2 = ifd;
         req->offs = SvVAL64 (in_offset);
         req->size = length;
 
@@ -743,11 +762,12 @@ aio_readahead (SV *fh, SV *offset, IV length, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
         PPCODE:
 {
+  	int fd = extract_fd (fh, 0);
 	dREQ;
 
         req->type = EIO_READAHEAD;
         req->sv1  = newSVsv (fh);
-        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh)));
+        req->int1 = fd;
         req->offs = SvVAL64 (offset);
         req->size = length;
 

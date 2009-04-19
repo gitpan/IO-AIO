@@ -7,7 +7,7 @@ use FindBin;
 use lib "$FindBin::Bin";
 use aio_test_common;
 
-BEGIN { plan tests => 13 }
+BEGIN { plan tests => 12 }
 
 IO::AIO::min_parallel 2;
 
@@ -43,11 +43,8 @@ pcb;
 
 # write to file open for reading
 ok(open(F, $some_file)) or die $!;
-aio_write *F, 0, 10, "foobarbaz.", 0, sub {
-    my $written = shift;
-    ok($written < 0);
-    ok($! == EBADF);
-};
+eval { aio_write *F, 0, 10, "foobarbaz.", 0, sub { ok (0) } };
+ok ($@ =~ /mode mismatch/);
 pcb;
 
 close F;
