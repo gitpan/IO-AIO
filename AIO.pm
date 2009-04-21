@@ -195,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.18';
+   our $VERSION = '3.19';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
@@ -340,16 +340,20 @@ free for reuse until the perl filehandle is closed.
 
 =item aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
-Reads or writes C<$length> bytes from the specified C<$fh> and C<$offset>
-into the scalar given by C<$data> and offset C<$dataoffset> and calls the
-callback without the actual number of bytes read (or -1 on error, just
-like the syscall).
+Reads or writes C<$length> bytes from or to the specified C<$fh> and
+C<$offset> into the scalar given by C<$data> and offset C<$dataoffset>
+and calls the callback without the actual number of bytes read (or -1 on
+error, just like the syscall).
+
+C<aio_read> will, like C<sysread>, shrink or grow the C<$data> scalar to
+offset plus the actual number of bytes read.
 
 If C<$offset> is undefined, then the current file descriptor offset will
 be used (and updated), otherwise the file descriptor offset will not be
 changed by these calls.
 
-If C<$length> is undefined in C<aio_write>, use the remaining length of C<$data>.
+If C<$length> is undefined in C<aio_write>, use the remaining length of
+C<$data>.
 
 If C<$dataoffset> is less than zero, it will be counted from the end of
 C<$data>.

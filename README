@@ -277,10 +277,13 @@ FUNCTIONS
 
     aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
     aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
-        Reads or writes $length bytes from the specified $fh and $offset
-        into the scalar given by $data and offset $dataoffset and calls the
-        callback without the actual number of bytes read (or -1 on error,
-        just like the syscall).
+        Reads or writes $length bytes from or to the specified $fh and
+        $offset into the scalar given by $data and offset $dataoffset and
+        calls the callback without the actual number of bytes read (or -1 on
+        error, just like the syscall).
+
+        "aio_read" will, like "sysread", shrink or grow the $data scalar to
+        offset plus the actual number of bytes read.
 
         If $offset is undefined, then the current file descriptor offset
         will be used (and updated), otherwise the file descriptor offset

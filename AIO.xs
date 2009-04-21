@@ -314,9 +314,13 @@ static int req_invoke (eio_req *req)
             break;
 
           case EIO_READ:
-            SvCUR_set (req->sv2, req->stroffset + (req->result > 0 ? req->result : 0));
-            *SvEND (req->sv2) = 0;
-            PUSHs (sv_2mortal (newSViv (req->result)));
+            {
+              SvCUR_set (req->sv2, req->stroffset + (req->result > 0 ? req->result : 0));
+              *SvEND (req->sv2) = 0;
+              SvPOK_only (req->sv2);
+              SvSETMAGIC (req->sv2);
+              PUSHs (sv_2mortal (newSViv (req->result)));
+            }
             break;
 
           case EIO_DUP2:
@@ -673,12 +677,6 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
         char *svptr = SvPVbyte (data, svlen);
         UV len = SvUV (length);
 
-        if (SvTYPE (data) > SVt_PVMG || SvROK (data))
-          croak ("illegal data argument '%s', must be plain scalar string", SvPV_nolen (data));
-
-        SvUPGRADE (data, SVt_PV);
-        SvPOK_only (data);
-
         if (dataoffset < 0)
           dataoffset += svlen;
 
@@ -693,7 +691,8 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
           }
         else
           {
-            /* read: grow scalar as necessary */
+            /* read: check type and grow scalar as necessary */
+            SvUPGRADE (data, SVt_PV);
             svptr = SvGROW (data, len + dataoffset + 1);
           }
 
