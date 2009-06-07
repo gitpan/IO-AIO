@@ -237,16 +237,50 @@ static int req_invoke (eio_req *req)
 
                   for (i = 0; i < req->result; ++i)
                     {
-                      SV *sv = newSVpv (buf, 0);
+                      if (req->int1 & EIO_READDIR_DENTS)
+                        {
+                          eio_dirent *ent = (eio_dirent *)buf;
+                          SV *namesv = newSVpvn (ent->name, ent->namelen);
 
-                      av_store (av, i, sv);
-                      buf += SvCUR (sv) + 1;
+                          if (req->int1 & EIO_READDIR_CUSTOM2)
+                            {
+                              static SV *sv_type [EIO_DT_MAX + 1]; /* type sv cache */
+                              AV *avent = newAV ();
+
+                              av_extend (avent, 2);
+
+                              if (!sv_type [ent->type])
+                                {
+                                  sv_type [ent->type] = newSViv (ent->type);
+                                  SvREADONLY_on (sv_type [ent->type]);
+                                }
+
+                              av_store (avent, 0, namesv);
+                              av_store (avent, 1, SvREFCNT_inc (sv_type [ent->type]));
+                              av_store (avent, 2, IVSIZE >= 8 ? newSVuv (ent->inode) : newSVnv (ent->inode));
+
+                              av_store (av, i, newRV_noinc ((SV *)avent));
+                            }
+                          else
+                            av_store (av, i, namesv);
+
+                          buf += sizeof (eio_dirent);
+                        }
+                      else
+                        {
+                          SV *name = newSVpv (buf, 0);
+                          av_store (av, i, name);
+                          buf += SvCUR (name) + 1;
+                        }
                     }
 
                   rv = sv_2mortal (newRV_noinc ((SV *)av));
                 }
 
               PUSHs (rv);
+
+              if (req->int1 & EIO_READDIR_CUSTOM1)
+                XPUSHs (sv_2mortal (newSViv (req->int1 & ~(EIO_READDIR_CUSTOM1 | EIO_READDIR_CUSTOM2))));
             }
             break;
 
@@ -523,28 +557,53 @@ PROTOTYPES: ENABLE
 
 BOOT:
 {
-	stash = gv_stashpv ("IO::AIO", 1);
+  stash = gv_stashpv ("IO::AIO", 1);
 
-        newCONSTSUB (stash, "EXDEV",    newSViv (EXDEV));
-        newCONSTSUB (stash, "O_RDONLY", newSViv (O_RDONLY));
-        newCONSTSUB (stash, "O_WRONLY", newSViv (O_WRONLY));
-        newCONSTSUB (stash, "O_CREAT",  newSViv (O_CREAT));
-        newCONSTSUB (stash, "O_TRUNC",  newSViv (O_TRUNC));
+  static const struct {
+    const char *name;
+    IV iv;
+  } *civ, const_iv[] = {
+#   define const_iv(name, value) { # name, (IV) value },
+#   define const_eio(name) { # name, (IV) EIO_ ## name },
+    const_iv (EXDEV   , EXDEV)
+    const_iv (ENOSYS  , ENOSYS)
+    const_iv (O_RDONLY, O_RDONLY)
+    const_iv (O_WRONLY, O_WRONLY)
+    const_iv (O_CREAT , O_CREAT)
+    const_iv (O_TRUNC , O_TRUNC)
 #ifndef _WIN32
-        newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
+    const_iv (S_IFIFO , S_IFIFO)
 #endif
-        newCONSTSUB (stash, "S_IFIFO",  newSViv (S_IFIFO));
-        newCONSTSUB (stash, "SYNC_FILE_RANGE_WAIT_BEFORE", newSViv (EIO_SYNC_FILE_RANGE_WAIT_BEFORE));
-        newCONSTSUB (stash, "SYNC_FILE_RANGE_WRITE"      , newSViv (EIO_SYNC_FILE_RANGE_WRITE));
-        newCONSTSUB (stash, "SYNC_FILE_RANGE_WAIT_AFTER" , newSViv (EIO_SYNC_FILE_RANGE_WAIT_AFTER));
+    const_eio (SYNC_FILE_RANGE_WAIT_BEFORE)
+    const_eio (SYNC_FILE_RANGE_WRITE)
+    const_eio (SYNC_FILE_RANGE_WAIT_AFTER)
 
-        create_respipe ();
+    const_eio (READDIR_DENTS)
+    const_eio (READDIR_DIRS_FIRST)
+    const_eio (READDIR_STAT_ORDER)
+    const_eio (READDIR_FOUND_UNKNOWN)
 
-        if (eio_init (want_poll, done_poll) < 0)
-          croak ("IO::AIO: unable to initialise eio library");
+    const_eio (DT_UNKNOWN)
+    const_eio (DT_FIFO)
+    const_eio (DT_CHR)
+    const_eio (DT_DIR)
+    const_eio (DT_BLK)
+    const_eio (DT_REG)
+    const_eio (DT_LNK)
+    const_eio (DT_SOCK)
+    const_eio (DT_WHT)
+  };
 
-        /* atfork child called in fifo order, so before eio's handler */
-        X_THREAD_ATFORK (0, 0, atfork_child);
+  for (civ = const_iv + sizeof (const_iv) / sizeof (const_iv [0]); civ-- > const_iv; )
+    newCONSTSUB (stash, (char *)civ->name, newSViv (civ->iv));
+
+  create_respipe ();
+
+  if (eio_init (want_poll, done_poll) < 0)
+    croak ("IO::AIO: unable to initialise eio library");
+
+  /* atfork child called in fifo order, so before eio's handler */
+  X_THREAD_ATFORK (0, 0, atfork_child);
 }
 
 void
@@ -695,9 +754,6 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
             SvUPGRADE (data, SVt_PV);
             svptr = SvGROW (data, len + dataoffset + 1);
           }
-
-        if (len < 0)
-          croak ("length must not be negative");
 
         {
           dREQ;
@@ -893,6 +949,23 @@ aio_chown (SV8 *fh_or_path, SV *uid, SV *gid, SV *callback=&PL_sv_undef)
           }
 
         REQ_SEND;
+}
+
+void
+aio_readdirx (SV8 *pathname, IV flags, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+	dREQ;
+	
+        req->type = EIO_READDIR;
+	req->sv1  = newSVsv (pathname);
+	req->ptr1 = SvPVbyte_nolen (req->sv1);
+        req->int1 = flags | EIO_READDIR_DENTS | EIO_READDIR_CUSTOM1;
+
+        if (flags & EIO_READDIR_DENTS)
+          req->int1 |= EIO_READDIR_CUSTOM2;
+
+	REQ_SEND;
 }
 
 void
@@ -1150,6 +1223,7 @@ result (aio_req grp, ...)
         grp->errorno = errno;
 
         av = newAV ();
+        av_extend (av, items - 1);
 
         for (i = 1; i < items; ++i )
           av_push (av, newSVsv (ST (i)));

@@ -195,10 +195,10 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.19';
+   our $VERSION = '3.2';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
-                     aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir
+                     aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
                      aio_scandir aio_symlink aio_readlink aio_sync aio_fsync
                      aio_fdatasync aio_sync_file_range aio_pathsync aio_readahead
                      aio_rename aio_link aio_move aio_copy aio_group
@@ -535,8 +535,74 @@ Unlike the POSIX call of the same name, C<aio_readdir> reads an entire
 directory (i.e. opendir + readdir + closedir). The entries will not be
 sorted, and will B<NOT> include the C<.> and C<..> entries.
 
-The callback a single argument which is either C<undef> or an array-ref
-with the filenames.
+The callback is passed a single argument which is either C<undef> or an
+array-ref with the filenames.
+
+
+=item aio_readdirx $pathname, $flags, $callback->($entries, $flags)
+
+Quite similar to C<aio_readdir>, but the C<$flags> argument allows to tune
+behaviour and output format. In case of an error, C<$entries> will be
+C<undef>.
+
+The flags are a combination of the following constants, ORed together (the
+flags will also be passed to the callback, possibly modified):
+
+=over 4
+
+=item IO::AIO::READDIR_DENTS
+
+When this flag is off, then the callback gets an arrayref with of names
+only (as with C<aio_readdir>), otherwise it gets an arrayref with
+C<[$name, $type, $inode]> arrayrefs, each describing a single directory
+entry in more detail.
+
+C<$name> is the name of the entry.
+
+C<$type> is one of the C<IO::AIO::DT_xxx> constants:
+
+C<IO::AIO::DT_UNKNOWN>, C<IO::AIO::DT_FIFO>, C<IO::AIO::DT_CHR>, C<IO::AIO::DT_DIR>,
+C<IO::AIO::DT_BLK>, C<IO::AIO::DT_REG>, C<IO::AIO::DT_LNK>, C<IO::AIO::DT_SOCK>,
+C<IO::AIO::DT_WHT>.
+
+C<IO::AIO::DT_UNKNOWN> means just that: readdir does not know. If you need to
+know, you have to run stat yourself. Also, for speed reasons, the C<$type>
+scalars are read-only: you can not modify them.
+
+C<$inode> is the inode number (which might not be exact on systems with 64
+bit inode numbers and 32 bit perls). On systems that do not deliver the
+inode information, this will always be zero.
+
+=item IO::AIO::READDIR_DIRS_FIRST
+
+When this flag is set, then the names will be returned in an order where
+likely directories come first. This is useful when you need to quickly
+find directories, or you want to find all directories while avoiding to
+stat() each entry.
+
+If the system returns type information in readdir, then this is used
+to find directories directly.  Otherwise, likely directories are files
+beginning with ".", or otherwise files with no dots, of which files with
+short names are tried first.
+
+=item IO::AIO::READDIR_STAT_ORDER
+
+When this flag is set, then the names will be returned in an order
+suitable for stat()'ing each one. That is, when you plan to stat()
+all files in the given directory, then the returned order will likely
+be fastest.
+
+If both this flag and C<IO::AIO::READDIR_DIRS_FIRST> are specified, then
+the likely dirs come first, resulting in a less optimal stat order.
+
+=item IO::AIO::READDIR_FOUND_UNKNOWN
+
+This flag should not be set when calling C<aio_readdirx>. Instead, it
+is being set by C<aio_readdirx>, when any of the C<$type>'s found were
+C<IO::AIO::DT_UNKNOWN>. The absense of this flag therefore indicates that all
+C<$type>'s are known, which can be used to speed up some algorithms.
+
+=back
 
 
 =item aio_load $path, $data, $callback->($status)
@@ -593,7 +659,7 @@ sub aio_copy($$;$) {
    aioreq_pri $pri;
    add $grp aio_open $src, O_RDONLY, 0, sub {
       if (my $src_fh = $_[0]) {
-         my @stat = stat $src_fh;
+         my @stat = stat $src_fh; # hmm, might bock over nfs?
 
          aioreq_pri $pri;
          add $grp aio_open $dst, O_CREAT | O_WRONLY | O_TRUNC, 0200, sub {
@@ -604,13 +670,26 @@ sub aio_copy($$;$) {
                      $grp->result (0);
                      close $src_fh;
 
-                     # those should not normally block. should. should.
-                     utime $stat[8], $stat[9], $dst;
-                     chmod $stat[2] & 07777, $dst_fh;
-                     chown $stat[4], $stat[5], $dst_fh;
+                     my $ch = sub {
+                        aioreq_pri $pri;
+                        add $grp aio_chmod $dst_fh, $stat[2] & 07777, sub {
+                           aioreq_pri $pri;
+                           add $grp aio_chown $dst_fh, $stat[4], $stat[5], sub {
+                              aioreq_pri $pri;
+                              add $grp aio_close $dst_fh;
+                           }
+                        };
+                     };
 
                      aioreq_pri $pri;
-                     add $grp aio_close $dst_fh;
+                     add $grp aio_utime $dst_fh, $stat[8], $stat[9], sub {
+                        if ($_[0] < 0 && $! == ENOSYS) {
+                           aioreq_pri $pri;
+                           add $grp aio_utime $dst, $stat[8], $stat[9], $ch;
+                        } else {
+                           $ch->();
+                        }
+                     };
                   } else {
                      $grp->result (-1);
                      close $src_fh;
@@ -698,20 +777,24 @@ Implementation notes.
 
 The C<aio_readdir> cannot be avoided, but C<stat()>'ing every entry can.
 
-After reading the directory, the modification time, size etc. of the
-directory before and after the readdir is checked, and if they match (and
-isn't the current time), the link count will be used to decide how many
-entries are directories (if >= 2). Otherwise, no knowledge of the number
-of subdirectories will be assumed.
+If readdir returns file type information, then this is used directly to
+find directories.
 
-Then entries will be sorted into likely directories (everything without
-a non-initial dot currently) and likely non-directories (everything
-else). Then every entry plus an appended C</.> will be C<stat>'ed,
-likely directories first. If that succeeds, it assumes that the entry
-is a directory or a symlink to directory (which will be checked
+Otherwise, after reading the directory, the modification time, size etc.
+of the directory before and after the readdir is checked, and if they
+match (and isn't the current time), the link count will be used to decide
+how many entries are directories (if >= 2). Otherwise, no knowledge of the
+number of subdirectories will be assumed.
+
+Then entries will be sorted into likely directories a non-initial dot
+currently) and likely non-directories (see C<aio_readdirx>). Then every
+entry plus an appended C</.> will be C<stat>'ed, likely directories first,
+in order of their inode numbers. If that succeeds, it assumes that the
+entry is a directory or a symlink to directory (which will be checked
 seperately). This is often faster than stat'ing the entry itself because
 filesystems might detect the type of the entry without reading the inode
-data (e.g. ext2fs filetype feature).
+data (e.g. ext2fs filetype feature), even on systems that cannot return
+the filetype information on readdir.
 
 If the known number of directories (link count - 2) has been reached, the
 rest of the entries is assumed to be non-directories.
@@ -743,7 +826,7 @@ sub aio_scandir($$;$) {
 
       # read the directory entries
       aioreq_pri $pri;
-      add $grp aio_readdir $path, sub {
+      add $grp aio_readdirx $path, READDIR_DIRS_FIRST, sub {
          my $entries = shift
             or return $grp->result ();
 
@@ -759,17 +842,10 @@ sub aio_scandir($$;$) {
                $ndirs = -1;
             } else {
                # if nlink == 2, we are finished
-               # on non-posix-fs's, we rely on nlink < 2
+               # for non-posix-fs's, we rely on nlink < 2
                $ndirs = (stat _)[3] - 2
                   or return $grp->result ([], $entries);
             }
-
-            # sort into likely dirs and likely nondirs
-            # dirs == files without ".", short entries first
-            $entries = [map $_->[0],
-                           sort { $b->[1] cmp $a->[1] }
-                              map [$_, sprintf "%s%04d", (/.\./ ? "1" : "0"), length],
-                                 @$entries];
 
             my (@dirs, @nondirs);
 
@@ -780,7 +856,7 @@ sub aio_scandir($$;$) {
             limit $statgrp $maxreq;
             feed $statgrp sub {
                return unless @$entries;
-               my $entry = pop @$entries;
+               my $entry = shift @$entries;
 
                aioreq_pri $pri;
                add $statgrp aio_stat "$path/$entry/.", sub {

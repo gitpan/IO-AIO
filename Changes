@@ -6,6 +6,16 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.2  Sun Jun  7 20:30:05 CEST 2009
+	- (libeio) pwrite emulation was even more flawed than intended and did
+          not restore the file offset.
+        - add aio_readdirx, which can return inode and filetype and sort
+          the names in various ways.
+        - unfortunately, utime, chmod, chown on an open file that has just
+          been written can easily block, which caused aio_copy to block the
+          process. no more!
+        - no longer rely on dst path in aio_copy when futime is available.
+
 3.19 Tue Apr 21 22:05:21 CEST 2009
 	- more perl 5.10 workarounds for aio_read and write.
         - aio_write no longer modifies the sv (if possible).

@@ -444,8 +444,68 @@ FUNCTIONS
         entire directory (i.e. opendir + readdir + closedir). The entries
         will not be sorted, and will NOT include the "." and ".." entries.
 
-        The callback a single argument which is either "undef" or an
-        array-ref with the filenames.
+        The callback is passed a single argument which is either "undef" or
+        an array-ref with the filenames.
+
+    aio_readdirx $pathname, $flags, $callback->($entries, $flags)
+        Quite similar to "aio_readdir", but the $flags argument allows to
+        tune behaviour and output format. In case of an error, $entries will
+        be "undef".
+
+        The flags are a combination of the following constants, ORed
+        together (the flags will also be passed to the callback, possibly
+        modified):
+
+        IO::AIO::READDIR_DENTS
+            When this flag is off, then the callback gets an arrayref with
+            of names only (as with "aio_readdir"), otherwise it gets an
+            arrayref with "[$name, $type, $inode]" arrayrefs, each
+            describing a single directory entry in more detail.
+
+            $name is the name of the entry.
+
+            $type is one of the "IO::AIO::DT_xxx" constants:
+
+            "IO::AIO::DT_UNKNOWN", "IO::AIO::DT_FIFO", "IO::AIO::DT_CHR",
+            "IO::AIO::DT_DIR", "IO::AIO::DT_BLK", "IO::AIO::DT_REG",
+            "IO::AIO::DT_LNK", "IO::AIO::DT_SOCK", "IO::AIO::DT_WHT".
+
+            "IO::AIO::DT_UNKNOWN" means just that: readdir does not know. If
+            you need to know, you have to run stat yourself. Also, for speed
+            reasons, the $type scalars are read-only: you can not modify
+            them.
+
+            $inode is the inode number (which might not be exact on systems
+            with 64 bit inode numbers and 32 bit perls). On systems that do
+            not deliver the inode information, this will always be zero.
+
+        IO::AIO::READDIR_DIRS_FIRST
+            When this flag is set, then the names will be returned in an
+            order where likely directories come first. This is useful when
+            you need to quickly find directories, or you want to find all
+            directories while avoiding to stat() each entry.
+
+            If the system returns type information in readdir, then this is
+            used to find directories directly. Otherwise, likely directories
+            are files beginning with ".", or otherwise files with no dots,
+            of which files with short names are tried first.
+
+        IO::AIO::READDIR_STAT_ORDER
+            When this flag is set, then the names will be returned in an
+            order suitable for stat()'ing each one. That is, when you plan
+            to stat() all files in the given directory, then the returned
+            order will likely be fastest.
+
+            If both this flag and "IO::AIO::READDIR_DIRS_FIRST" are
+            specified, then the likely dirs come first, resulting in a less
+            optimal stat order.
+
+        IO::AIO::READDIR_FOUND_UNKNOWN
+            This flag should not be set when calling "aio_readdirx".
+            Instead, it is being set by "aio_readdirx", when any of the
+            $type's found were "IO::AIO::DT_UNKNOWN". The absense of this
+            flag therefore indicates that all $type's are known, which can
+            be used to speed up some algorithms.
 
     aio_load $path, $data, $callback->($status)
         This is a composite request that tries to fully load the given file
@@ -502,20 +562,26 @@ FUNCTIONS
         The "aio_readdir" cannot be avoided, but "stat()"'ing every entry
         can.
 
-        After reading the directory, the modification time, size etc. of the
-        directory before and after the readdir is checked, and if they match
-        (and isn't the current time), the link count will be used to decide
-        how many entries are directories (if >= 2). Otherwise, no knowledge
-        of the number of subdirectories will be assumed.
+        If readdir returns file type information, then this is used directly
+        to find directories.
 
-        Then entries will be sorted into likely directories (everything
-        without a non-initial dot currently) and likely non-directories
-        (everything else). Then every entry plus an appended "/." will be
-        "stat"'ed, likely directories first. If that succeeds, it assumes
-        that the entry is a directory or a symlink to directory (which will
-        be checked seperately). This is often faster than stat'ing the entry
-        itself because filesystems might detect the type of the entry
-        without reading the inode data (e.g. ext2fs filetype feature).
+        Otherwise, after reading the directory, the modification time, size
+        etc. of the directory before and after the readdir is checked, and
+        if they match (and isn't the current time), the link count will be
+        used to decide how many entries are directories (if >= 2).
+        Otherwise, no knowledge of the number of subdirectories will be
+        assumed.
+
+        Then entries will be sorted into likely directories a non-initial
+        dot currently) and likely non-directories (see "aio_readdirx"). Then
+        every entry plus an appended "/." will be "stat"'ed, likely
+        directories first, in order of their inode numbers. If that
+        succeeds, it assumes that the entry is a directory or a symlink to
+        directory (which will be checked seperately). This is often faster
+        than stat'ing the entry itself because filesystems might detect the
+        type of the entry without reading the inode data (e.g. ext2fs
+        filetype feature), even on systems that cannot return the filetype
+        information on readdir.
 
         If the known number of directories (link count - 2) has been
         reached, the rest of the entries is assumed to be non-directories.
