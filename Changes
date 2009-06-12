@@ -6,6 +6,17 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.21 Fri Jun 12 18:45:53 CEST 2009
+	- new options --dirs and --files for treescan.
+        - install bin/treescan by default.
+        - (libeio) aio_readdir can now be cancelled while executing.
+        - fix a printf format string for 64 bit systems (could lead
+          to problems on big endian 64 bit systems).
+        - do not use qsort() but our own algorithm: glibc initialises
+          the whole locale and I/O subsystem inside qsort, causing
+          a stack overflow on 32 bit machines. The new sort uses much less
+          stack and is more than twice as fast in typical situations.
+
 3.2  Sun Jun  7 20:30:05 CEST 2009
 	- (libeio) pwrite emulation was even more flawed than intended and did
           not restore the file offset.

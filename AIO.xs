@@ -296,7 +296,7 @@ static int req_invoke (eio_req *req)
                   char sym [64];
                   int symlen;
                   
-                  symlen = snprintf (sym, sizeof (sym), "fd#%d", req->result);
+                  symlen = snprintf (sym, sizeof (sym), "fd#%d", (int)req->result);
                   gv_init (gv, stash, sym, symlen, 0);
 
                   symlen = snprintf (
@@ -304,7 +304,7 @@ static int req_invoke (eio_req *req)
                      sizeof (sym),
                      "%s&=%d",
                      flags == O_RDONLY ? "<" : flags == O_WRONLY ? ">" : "+<",
-                     req->result
+                     (int)req->result
                   );
 
                   if (do_open (gv, sym, symlen, 0, 0, 0, 0))
@@ -557,8 +557,6 @@ PROTOTYPES: ENABLE
 
 BOOT:
 {
-  stash = gv_stashpv ("IO::AIO", 1);
-
   static const struct {
     const char *name;
     IV iv;
@@ -593,6 +591,8 @@ BOOT:
     const_eio (DT_SOCK)
     const_eio (DT_WHT)
   };
+
+  stash = gv_stashpv ("IO::AIO", 1);
 
   for (civ = const_iv + sizeof (const_iv) / sizeof (const_iv [0]); civ-- > const_iv; )
     newCONSTSUB (stash, (char *)civ->name, newSViv (civ->iv));

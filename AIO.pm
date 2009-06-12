@@ -195,7 +195,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.2';
+   our $VERSION = '3.21';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -1047,8 +1047,9 @@ called in non-void context.
 Cancels the request, if possible. Has the effect of skipping execution
 when entering the B<execute> state and skipping calling the callback when
 entering the the B<result> state, but will leave the request otherwise
-untouched. That means that requests that currently execute will not be
-stopped and resources held by the request will not be freed prematurely.
+untouched (with the exception of readdir). That means that requests that
+currently execute will not be stopped and resources held by the request
+will not be freed prematurely.
 
 =item cb $req $callback->(...)
 

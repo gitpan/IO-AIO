@@ -87,6 +87,7 @@ my $mm = MM->new({
     VERSION_FROM => "AIO.pm",
     INC          => $INC,
     LIBS         => $LIBS,
+    EXE_FILES    => ["bin/treescan"],
     PM           => {
     		    'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
                     },

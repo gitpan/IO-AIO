@@ -686,9 +686,9 @@ FUNCTIONS
         Cancels the request, if possible. Has the effect of skipping
         execution when entering the execute state and skipping calling the
         callback when entering the the result state, but will leave the
-        request otherwise untouched. That means that requests that currently
-        execute will not be stopped and resources held by the request will
-        not be freed prematurely.
+        request otherwise untouched (with the exception of readdir). That
+        means that requests that currently execute will not be stopped and
+        resources held by the request will not be freed prematurely.
 
     cb $req $callback->(...)
         Replace (or simply set) the callback registered to the request.
