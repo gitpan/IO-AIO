@@ -5,6 +5,7 @@ Changes
 Makefile.PL
 AIO.pm
 AIO.xs
+bin/treescan
 t/00_load.t
 t/01_stat.t
 t/02_read.t
