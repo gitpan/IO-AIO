@@ -6,6 +6,10 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 
+3.23 Sat Jun 13 16:57:58 CEST 2009
+	- fix off-by-one bug in aio_readdir that was introduced in the
+          rushed 3.22 release.
+
 3.22 Sat Jun 13 15:32:40 CEST 2009
 	- speed up readdirx sort algorithm slightly.
         - bin/treescan was missing from distro tarball.
