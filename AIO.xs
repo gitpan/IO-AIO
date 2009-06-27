@@ -77,9 +77,13 @@
 
 /* use NV for 32 bit perls as it allows larger offsets */
 #if IVSIZE >= 8
+# define VAL64 IV
 # define SvVAL64 SvIV
+# define newSVval64 newSViv
 #else
+# define VAL64 NV
 # define SvVAL64 SvNV
+# define newSVval64 newSVnv
 #endif
 
 /*****************************************************************************/
@@ -97,6 +101,8 @@
 
 static HV *stash;
 typedef SV SV8; /* byte-sv, used for argument-checking */
+typedef int aio_rfd; /* read file desriptor */
+typedef int aio_wfd; /* write file descriptor */
 
 #define AIO_REQ_KLASS "IO::AIO::REQ"
 #define AIO_GRP_KLASS "IO::AIO::GRP"
@@ -110,6 +116,30 @@ typedef SV SV8; /* byte-sv, used for argument-checking */
 #define EIO_NO_WRAPPERS 1
 
 #include "libeio/eio.h"
+
+#ifndef POSIX_FADV_NORMAL
+# define POSIX_FADV_NORMAL 0
+#endif
+
+#ifndef POSIX_FADV_SEQUENTIAL
+# define POSIX_FADV_SEQUENTIAL 0
+#endif
+
+#ifndef POSIX_FADV_RANDOM
+# define POSIX_FADV_RANDOM 0
+#endif
+
+#ifndef POSIX_FADV_NOREUSE
+# define POSIX_FADV_NOREUSE 0
+#endif
+
+#ifndef POSIX_FADV_WILLNEED
+# define POSIX_FADV_WILLNEED 0
+#endif
+
+#ifndef POSIX_FADV_DONTNEED
+# define POSIX_FADV_DONTNEED 0
+#endif
 
 static int req_invoke    (eio_req *req);
 #define EIO_FINISH(req)  req_invoke (req)
@@ -230,7 +260,8 @@ static int req_invoke (eio_req *req)
               if (req->result >= 0)
                 {
                   int i;
-                  char *buf = req->ptr2;
+                  char *names = (char *)req->ptr2;
+                  eio_dirent *ent = (eio_dirent *)req->ptr1; /* might be 0 */
                   AV *av = newAV ();
 
                   av_extend (av, req->result - 1);
@@ -239,8 +270,7 @@ static int req_invoke (eio_req *req)
                     {
                       if (req->int1 & EIO_READDIR_DENTS)
                         {
-                          eio_dirent *ent = (eio_dirent *)buf;
-                          SV *namesv = newSVpvn (ent->name, ent->namelen);
+                          SV *namesv = newSVpvn (names + ent->nameofs, ent->namelen);
 
                           if (req->int1 & EIO_READDIR_CUSTOM2)
                             {
@@ -264,13 +294,13 @@ static int req_invoke (eio_req *req)
                           else
                             av_store (av, i, namesv);
 
-                          buf += sizeof (eio_dirent);
+                          ++ent;
                         }
                       else
                         {
-                          SV *name = newSVpv (buf, 0);
+                          SV *name = newSVpv (names, 0);
                           av_store (av, i, name);
-                          buf += SvCUR (name) + 1;
+                          names += SvCUR (name) + 1;
                         }
                     }
 
@@ -572,6 +602,13 @@ BOOT:
 #ifndef _WIN32
     const_iv (S_IFIFO , S_IFIFO)
 #endif
+    const_iv (FADV_NORMAL    , POSIX_FADV_NORMAL)
+    const_iv (FADV_SEQUENTIAL, POSIX_FADV_SEQUENTIAL)
+    const_iv (FADV_RANDOM    , POSIX_FADV_RANDOM)
+    const_iv (FADV_NOREUSE   , POSIX_FADV_NOREUSE)
+    const_iv (FADV_WILLNEED  , POSIX_FADV_WILLNEED)
+    const_iv (FADV_DONTNEED  , POSIX_FADV_DONTNEED)
+
     const_eio (SYNC_FILE_RANGE_WAIT_BEFORE)
     const_eio (SYNC_FILE_RANGE_WRITE)
     const_eio (SYNC_FILE_RANGE_WAIT_AFTER)
@@ -677,7 +714,7 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
 }
 
 void
-aio_sync_file_range (SV *fh, SV *offset, SV *nbytes, IV flags, SV *callback=&PL_sv_undef)
+aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$$;$
 	PPCODE:
 {
@@ -687,8 +724,8 @@ aio_sync_file_range (SV *fh, SV *offset, SV *nbytes, IV flags, SV *callback=&PL_
         req->type = EIO_SYNC_FILE_RANGE;
         req->sv1  = newSVsv (fh);
         req->int1 = fd;
-        req->offs = SvVAL64 (offset);
-        req->size = SvVAL64 (nbytes);
+        req->offs = offset;
+        req->size = nbytes;
         req->int2 = flags;
 
         REQ_SEND (req);
@@ -793,7 +830,7 @@ aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
 }
 
 void
-aio_sendfile (SV *out_fh, SV *in_fh, SV *in_offset, UV length, SV *callback=&PL_sv_undef)
+aio_sendfile (SV *out_fh, SV *in_fh, off_t in_offset, size_t length, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$$;$
         PPCODE:
 {
@@ -806,14 +843,14 @@ aio_sendfile (SV *out_fh, SV *in_fh, SV *in_offset, UV length, SV *callback=&PL_
         req->int1 = ofd;
         req->sv2  = newSVsv (in_fh);
         req->int2 = ifd;
-        req->offs = SvVAL64 (in_offset);
+        req->offs = in_offset;
         req->size = length;
 
         REQ_SEND;
 }
 
 void
-aio_readahead (SV *fh, SV *offset, IV length, SV *callback=&PL_sv_undef)
+aio_readahead (SV *fh, off_t offset, size_t length, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
         PPCODE:
 {
@@ -823,7 +860,7 @@ aio_readahead (SV *fh, SV *offset, IV length, SV *callback=&PL_sv_undef)
         req->type = EIO_READAHEAD;
         req->sv1  = newSVsv (fh);
         req->int1 = fd;
-        req->offs = SvVAL64 (offset);
+        req->offs = offset;
         req->size = length;
 
         REQ_SEND;
@@ -1152,6 +1189,26 @@ nthreads()
         RETVAL = eio_nthreads ();
 	OUTPUT:
 	RETVAL
+
+int
+fadvise (aio_rfd fh, off_t offset, off_t length, IV advice)
+        PROTOTYPE: $$$$
+        CODE:
+{
+	#if _XOPEN_SOURCE >= 600
+        RETVAL = posix_fadvise (fh, offset, length, advice);
+	#else
+        RETVAL = errno = ENOSYS;
+	#endif
+}
+	OUTPUT:
+        RETVAL
+
+ssize_t
+sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
+        PROTOTYPE: $$$$
+        CODE:
+        eio_sendfile_sync (ofh, ifh, offset, count);
 
 void _on_next_submit (SV *cb)
 	CODE:

@@ -32,7 +32,7 @@ IO::AIO - Asynchronous Input/Output
  use AnyEvent::AIO;
 
  # EV integration
- my $w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
+ my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
  # Event integration
  Event->io (fd => IO::AIO::poll_fileno,
@@ -54,7 +54,8 @@ IO::AIO - Asynchronous Input/Output
 =head1 DESCRIPTION
 
 This module implements asynchronous I/O using whatever means your
-operating system supports.
+operating system supports. It is implemented as an interface to C<libeio>
+(L<http://software.schmorp.de/pkg/libeio.html>).
 
 Asynchronous means that operations that can normally block your program
 (e.g. reading from disk) will be done asynchronously: the operation
@@ -68,8 +69,8 @@ concurrently.
 
 While most of this works on all types of file descriptors (for
 example sockets), using these functions on file descriptors that
-support nonblocking operation (again, sockets, pipes etc.) is very
-inefficient. Use an event loop for that (such as the L<Event|Event>
+support nonblocking operation (again, sockets, pipes etc.) is
+very inefficient. Use an event loop for that (such as the L<EV>
 module): IO::AIO will naturally fit into such an event loop itself.
 
 In this version, a number of threads are started that execute your
@@ -89,17 +90,15 @@ call C<poll_cb> (or other C<aio_> functions) recursively.
 
 =head2 EXAMPLE
 
-This is a simple example that uses the Event module and loads
+This is a simple example that uses the EV module and loads
 F</etc/passwd> asynchronously:
 
    use Fcntl;
-   use Event;
+   use EV;
    use IO::AIO;
 
-   # register the IO::AIO callback with Event
-   Event->io (fd => IO::AIO::poll_fileno,
-              poll => 'r',
-              cb => \&IO::AIO::poll_cb);
+   # register the IO::AIO callback with EV
+   my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
    # queue the request to open /etc/passwd
    aio_open "/etc/passwd", O_RDONLY, 0, sub {
@@ -121,7 +120,7 @@ F</etc/passwd> asynchronously:
          print $contents;
 
          # exit event loop and program
-         Event::unloop;
+         EV::unloop;
       };
    };
 
@@ -129,7 +128,7 @@ F</etc/passwd> asynchronously:
    # check for sockets etc. etc.
 
    # process events as long as there are some:
-   Event::loop;
+   EV::loop;
 
 =head1 REQUEST ANATOMY AND LIFETIME
 
@@ -195,7 +194,7 @@ use strict 'vars';
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.23';
+   our $VERSION = '3.25';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -209,7 +208,8 @@ BEGIN {
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
                        nreqs nready npending nthreads
-                       max_poll_time max_poll_reqs);
+                       max_poll_time max_poll_reqs
+                       sendfile fadvise);
 
    push @AIO_REQ, qw(aio_busy); # not exported
 
@@ -570,8 +570,8 @@ know, you have to run stat yourself. Also, for speed reasons, the C<$type>
 scalars are read-only: you can not modify them.
 
 C<$inode> is the inode number (which might not be exact on systems with 64
-bit inode numbers and 32 bit perls). On systems that do not deliver the
-inode information, this will always be zero.
+bit inode numbers and 32 bit perls). This field has unspecified content on
+systems that do not deliver the inode information.
 
 =item IO::AIO::READDIR_DIRS_FIRST
 
@@ -1210,9 +1210,9 @@ automatically bumps it up to C<2>.
 =item $fileno = IO::AIO::poll_fileno
 
 Return the I<request result pipe file descriptor>. This filehandle must be
-polled for reading by some mechanism outside this module (e.g. Event or
-select, see below or the SYNOPSIS). If the pipe becomes readable you have
-to call C<poll_cb> to check the results.
+polled for reading by some mechanism outside this module (e.g. EV, Glib,
+select and so on, see below or the SYNOPSIS). If the pipe becomes readable
+you have to call C<poll_cb> to check the results.
 
 See C<poll_cb> for an example.
 
@@ -1229,7 +1229,8 @@ will still be ready when C<poll_cb> returns, so normally you don't have to
 do anything special to have it called later.
 
 Example: Install an Event watcher that automatically calls
-IO::AIO::poll_cb with high priority:
+IO::AIO::poll_cb with high priority (more examples can be found in the
+SYNOPSIS section, at the top of this document):
 
    Event->io (fd => IO::AIO::poll_fileno,
               poll => 'r', async => 1,
@@ -1393,6 +1394,35 @@ executed).
 
 Returns the number of requests currently in the pending state (executed,
 but not yet processed by poll_cb).
+
+=back
+
+=head3 MISCELLANEOUS FUNCTIONS
+
+IO::AIO implements some functions that might be useful, but are not
+asynchronous.
+
+=over 4
+
+=item IO::AIO::sendfile $ofh, $ifh, $offset, $count
+
+Calls the C<eio_sendfile_sync> function, which is like C<aio_sendfile>,
+but is blocking (this makes most sense if you know the input data is
+likely cached already and the output filehandle is set to non-blocking
+operations).
+
+Returns the number of bytes copied, or C<-1> on error.
+
+=item IO::AIO::fadvise $fh, $offset, $len, $advice
+
+Simply calls the C<posix_fadvise> function (see it's
+manpage for details). The following advice constants are
+avaiable: C<IO::AIO::FADV_NORMAL>, C<IO::AIO::FADV_SEQUENTIAL>,
+C<IO::AIO::FADV_RANDOM>, C<IO::AIO::FADV_NOREUSE>,
+C<IO::AIO::FADV_WILLNEED>, C<IO::AIO::FADV_DONTNEED>.
+
+On systems that do not implement C<posix_fadvise>, this function returns
+ENOSYS, otherwise the return value of C<posix_fadvise>.
 
 =back
 

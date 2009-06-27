@@ -5,6 +5,22 @@ TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
+TODO: fallocate, if it wouldn't be so useless.
+
+3.25 Sat Jun 27 05:18:26 CEST 2009
+        - added IO::AIO::fadvise and IO::AIO::sendfile.
+        - (libeio) replaced quicksort+insertion sort by a tuned radix
+          sort + insertion sort, resulting in comparable runtime (usually
+          faster) to the old version, but without any ill side effects on
+          degenerated (for quicksort) data.
+        - (libeio) correctly sort dirs by inodes if we have perfect type
+          knowledge and DIRS_FIRST is used.
+        - (libeio) internally the wrong DT_* constants were used, but no
+          known system has differing EIO_DT_*/DT_* values, so not an issue.
+        - removed a (harmless) assert that was left over on the code
+          but should not have been.
+        - use more correct types (change IO length from IV to VAL64,
+          which makes a difference on systems without 64 bit perls).
 
 3.23 Sat Jun 13 16:57:58 CEST 2009
 	- fix off-by-one bug in aio_readdir that was introduced in the

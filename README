@@ -30,7 +30,7 @@ SYNOPSIS
      use AnyEvent::AIO;
 
      # EV integration
-     my $w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
+     my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
      # Event integration
      Event->io (fd => IO::AIO::poll_fileno,
@@ -51,7 +51,8 @@ SYNOPSIS
 
 DESCRIPTION
     This module implements asynchronous I/O using whatever means your
-    operating system supports.
+    operating system supports. It is implemented as an interface to "libeio"
+    (<http://software.schmorp.de/pkg/libeio.html>).
 
     Asynchronous means that operations that can normally block your program
     (e.g. reading from disk) will be done asynchronously: the operation will
@@ -66,7 +67,7 @@ DESCRIPTION
     While most of this works on all types of file descriptors (for example
     sockets), using these functions on file descriptors that support
     nonblocking operation (again, sockets, pipes etc.) is very inefficient.
-    Use an event loop for that (such as the Event module): IO::AIO will
+    Use an event loop for that (such as the EV module): IO::AIO will
     naturally fit into such an event loop itself.
 
     In this version, a number of threads are started that execute your
@@ -85,17 +86,15 @@ DESCRIPTION
     call "poll_cb" (or other "aio_" functions) recursively.
 
   EXAMPLE
-    This is a simple example that uses the Event module and loads
-    /etc/passwd asynchronously:
+    This is a simple example that uses the EV module and loads /etc/passwd
+    asynchronously:
 
        use Fcntl;
-       use Event;
+       use EV;
        use IO::AIO;
 
-       # register the IO::AIO callback with Event
-       Event->io (fd => IO::AIO::poll_fileno,
-                  poll => 'r',
-                  cb => \&IO::AIO::poll_cb);
+       # register the IO::AIO callback with EV
+       my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
        # queue the request to open /etc/passwd
        aio_open "/etc/passwd", O_RDONLY, 0, sub {
@@ -117,7 +116,7 @@ DESCRIPTION
              print $contents;
 
              # exit event loop and program
-             Event::unloop;
+             EV::unloop;
           };
        };
 
@@ -125,7 +124,7 @@ DESCRIPTION
        # check for sockets etc. etc.
 
        # process events as long as there are some:
-       Event::loop;
+       EV::loop;
 
 REQUEST ANATOMY AND LIFETIME
     Every "aio_*" function creates a request. which is a C data structure
@@ -476,8 +475,9 @@ FUNCTIONS
             them.
 
             $inode is the inode number (which might not be exact on systems
-            with 64 bit inode numbers and 32 bit perls). On systems that do
-            not deliver the inode information, this will always be zero.
+            with 64 bit inode numbers and 32 bit perls). This field has
+            unspecified content on systems that do not deliver the inode
+            information.
 
         IO::AIO::READDIR_DIRS_FIRST
             When this flag is set, then the names will be returned in an
@@ -828,8 +828,9 @@ FUNCTIONS
     $fileno = IO::AIO::poll_fileno
         Return the *request result pipe file descriptor*. This filehandle
         must be polled for reading by some mechanism outside this module
-        (e.g. Event or select, see below or the SYNOPSIS). If the pipe
-        becomes readable you have to call "poll_cb" to check the results.
+        (e.g. EV, Glib, select and so on, see below or the SYNOPSIS). If the
+        pipe becomes readable you have to call "poll_cb" to check the
+        results.
 
         See "poll_cb" for an example.
 
@@ -846,7 +847,8 @@ FUNCTIONS
         you don't have to do anything special to have it called later.
 
         Example: Install an Event watcher that automatically calls
-        IO::AIO::poll_cb with high priority:
+        IO::AIO::poll_cb with high priority (more examples can be found in
+        the SYNOPSIS section, at the top of this document):
 
            Event->io (fd => IO::AIO::poll_fileno,
                       poll => 'r', async => 1,
@@ -995,6 +997,28 @@ FUNCTIONS
     IO::AIO::npending
         Returns the number of requests currently in the pending state
         (executed, but not yet processed by poll_cb).
+
+   MISCELLANEOUS FUNCTIONS
+    IO::AIO implements some functions that might be useful, but are not
+    asynchronous.
+
+    IO::AIO::sendfile $ofh, $ifh, $offset, $count
+        Calls the "eio_sendfile_sync" function, which is like
+        "aio_sendfile", but is blocking (this makes most sense if you know
+        the input data is likely cached already and the output filehandle is
+        set to non-blocking operations).
+
+        Returns the number of bytes copied, or -1 on error.
+
+    IO::AIO::fadvise $fh, $offset, $len, $advice
+        Simply calls the "posix_fadvise" function (see it's manpage for
+        details). The following advice constants are avaiable:
+        "IO::AIO::FADV_NORMAL", "IO::AIO::FADV_SEQUENTIAL",
+        "IO::AIO::FADV_RANDOM", "IO::AIO::FADV_NOREUSE",
+        "IO::AIO::FADV_WILLNEED", "IO::AIO::FADV_DONTNEED".
+
+        On systems that do not implement "posix_fadvise", this function
+        returns ENOSYS, otherwise the return value of "posix_fadvise".
 
   FORK BEHAVIOUR
     This module should do "the right thing" when the process using it forks:
