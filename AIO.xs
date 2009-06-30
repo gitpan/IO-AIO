@@ -119,6 +119,7 @@ typedef int aio_wfd; /* write file descriptor */
 
 #ifndef POSIX_FADV_NORMAL
 # define POSIX_FADV_NORMAL 0
+# define NO_FADVISE 1
 #endif
 
 #ifndef POSIX_FADV_SEQUENTIAL
@@ -1195,7 +1196,7 @@ fadvise (aio_rfd fh, off_t offset, off_t length, IV advice)
         PROTOTYPE: $$$$
         CODE:
 {
-	#if _XOPEN_SOURCE >= 600
+	#if _XOPEN_SOURCE >= 600 && !NO_FADVISE
         RETVAL = posix_fadvise (fh, offset, length, advice);
 	#else
         RETVAL = errno = ENOSYS;

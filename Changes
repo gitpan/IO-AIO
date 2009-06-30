@@ -7,6 +7,11 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 
+3.26 Tue Jun 30 09:33:26 CEST 2009
+	- os x of course claims posix 2008 but lacks posix_fadvise. try to work
+          around this horribly broken OS in a somewhat hackish way. might help
+          other os's too.
+
 3.25 Sat Jun 27 05:18:26 CEST 2009
         - added IO::AIO::fadvise and IO::AIO::sendfile.
         - (libeio) replaced quicksort+insertion sort by a tuned radix
