@@ -1195,13 +1195,11 @@ int
 fadvise (aio_rfd fh, off_t offset, off_t length, IV advice)
         PROTOTYPE: $$$$
         CODE:
-{
-	#if _XOPEN_SOURCE >= 600 && !NO_FADVISE
+#if _XOPEN_SOURCE >= 600 && !NO_FADVISE
         RETVAL = posix_fadvise (fh, offset, length, advice);
-	#else
+#else
         RETVAL = errno = ENOSYS;
-	#endif
-}
+#endif
 	OUTPUT:
         RETVAL
 

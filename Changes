@@ -7,6 +7,9 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 
+3.261 Wed Jul  1 10:11:51 CEST 2009
+	- more OS X workarounds (patch by Tokuhiro Matsuno).
+
 3.26 Tue Jun 30 09:33:26 CEST 2009
 	- os x of course claims posix 2008 but lacks posix_fadvise. try to work
           around this horribly broken OS in a somewhat hackish way. might help
