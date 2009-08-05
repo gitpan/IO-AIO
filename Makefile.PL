@@ -1,4 +1,4 @@
-use v5.8.8;
+use 5.008002;
 
 use ExtUtils::MakeMaker;
 
@@ -91,6 +91,9 @@ my $mm = MM->new({
     PM           => {
     		    'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
                     },
+    PREREQ_PM => {
+       "common::sense" => 0,
+    },
     clean        => { FILES => "libeio/config.h libeio/config.log libeio/config.status" },
 });
 

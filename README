@@ -633,6 +633,9 @@ FUNCTIONS
         directory changes get written to disc. It works for anything that
         can be opened for read-only, not just directories.
 
+        Future versions of this function might fall back to other methods
+        when "fsync" on the directory fails (such as calling "sync").
+
         Passes 0 when everything went ok, and -1 on error.
 
     aio_group $callback->(...)

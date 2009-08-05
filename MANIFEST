@@ -3,6 +3,7 @@ MANIFEST
 COPYING
 Changes
 Makefile.PL
+schmorp.h
 AIO.pm
 AIO.xs
 bin/treescan

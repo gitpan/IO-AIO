@@ -7,6 +7,13 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 
+3.3  Wed Aug  5 13:52:58 CEST 2009
+	- use common::sense.
+        - use common schmorp.h header.
+        - allow integers (file descriptors) in addition to file handles.
+        - take advantage of linux' eventfd (but it seems slower on smp?).
+        - use poll not select on posix platforms.
+
 3.261 Wed Jul  1 10:11:51 CEST 2009
 	- more OS X workarounds (patch by Tokuhiro Matsuno).
 

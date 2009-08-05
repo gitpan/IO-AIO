@@ -28,10 +28,10 @@ T_VAL64
 	$var = ($type)SvVAL64 ($arg);
 
 T_AIO_RFD
-  	$var = extract_fd ($arg, 0);
+  	$var = s_fileno_croak ($arg, 0);
 
 T_AIO_WFD
-  	$var = extract_fd ($arg, 1);
+  	$var = s_fileno_croak ($arg, 1);
 
 OUTPUT
 

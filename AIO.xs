@@ -6,6 +6,8 @@
 #include "perl.h"
 #include "XSUB.h"
 
+#include "schmorp.h"
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -160,7 +162,7 @@ static SV *on_next_submit;
 static int next_pri = EIO_PRI_DEFAULT;
 static int max_outstanding;
 
-static int respipe_osf [2], respipe [2] = { -1, -1 };
+static s_epipe respipe;
 
 static void req_destroy (aio_req req);
 static void req_cancel (aio_req req);
@@ -168,15 +170,13 @@ static void req_cancel (aio_req req);
 static void want_poll (void)
 {
   /* write a dummy byte to the pipe so fh becomes ready */
-  respipe_write (respipe_osf [1], (const void *)&respipe_osf, 1);
+  s_epipe_signal (&respipe);
 }
 
 static void done_poll (void)
 {
   /* read any signals sent by the worker threads */
-  char buf [4];
-  while (respipe_read (respipe [0], buf, 4) == 4)
-    ;
+  s_epipe_drain (&respipe);
 }
 
 /* must be called at most once */
@@ -441,54 +441,15 @@ static void req_cancel_subs (aio_req grp)
   eio_grp_cancel (grp);
 }
 
-#ifdef USE_SOCKETS_AS_HANDLES
-# define TO_SOCKET(x) (win32_get_osfhandle (x))
-#else
-# define TO_SOCKET(x) (x)
-#endif
-
 static void
 create_respipe (void)
 {
-  int old_readfd = respipe [0];
-
-  if (respipe [1] >= 0)
-    respipe_close (TO_SOCKET (respipe [1]));
-
-#ifdef _WIN32
-  if (PerlSock_socketpair (AF_UNIX, SOCK_STREAM, 0, respipe))
-#else
-  if (pipe (respipe))
-#endif
-    croak ("unable to initialize result pipe");
-
-  if (old_readfd >= 0)
-    {
-      if (dup2 (TO_SOCKET (respipe [0]), TO_SOCKET (old_readfd)) < 0)
-        croak ("unable to initialize result pipe(2)");
-
-      respipe_close (respipe [0]);
-      respipe [0] = old_readfd;
-    }
-
-#ifdef _WIN32
-  int arg = 1;
-  if (ioctlsocket (TO_SOCKET (respipe [0]), FIONBIO, &arg)
-      || ioctlsocket (TO_SOCKET (respipe [1]), FIONBIO, &arg))
-#else
-  if (fcntl (respipe [0], F_SETFL, O_NONBLOCK)
-      || fcntl (respipe [1], F_SETFL, O_NONBLOCK))
-#endif
-    croak ("unable to initialize result pipe(3)");
-
-  respipe_osf [0] = TO_SOCKET (respipe [0]);
-  respipe_osf [1] = TO_SOCKET (respipe [1]);
+  if (s_epipe_renew (&respipe))
+    croak ("IO::AIO: unable to initialize result pipe");
 }
 
 static void poll_wait (void)
 {
-  fd_set rfd;
-
   while (eio_nreqs ())
     {
       int size;
@@ -502,10 +463,7 @@ static void poll_wait (void)
 
       etp_maybe_start_thread ();
 
-      FD_ZERO (&rfd);
-      FD_SET (respipe [0], &rfd);
-
-      PerlSock_select (respipe [0] + 1, &rfd, 0, 0, 0);
+      s_epipe_wait (&respipe);
     }
 }
 
@@ -533,19 +491,8 @@ static void atfork_child (void)
 static SV *
 get_cb (SV *cb_sv)
 {
-  HV *st;
-  GV *gvp;
-  CV *cv;
-
-  if (!SvOK (cb_sv))
-    return 0;
-
-  cv = sv_2cv (cb_sv, &st, &gvp, 0);
-
-  if (!cv)
-    croak ("IO::AIO callback must be undef or a CODE reference");
-
-  return (SV *)cv;
+  SvGETMAGIC (cb_sv);
+  return SvOK (cb_sv) ? s_get_cv_croak (cb_sv) : 0;
 }
 
 #define dREQ							\
@@ -570,17 +517,6 @@ get_cb (SV *cb_sv)
 								\
   if (GIMME_V != G_VOID)					\
     XPUSHs (req_sv (req, AIO_REQ_KLASS));
-
-static int
-extract_fd (SV *fh, int wr)
-{
-  int fd = PerlIO_fileno (wr ? IoOFP (sv_2io (fh)) : IoIFP (sv_2io (fh)));
-
-  if (fd < 0)
-    croak ("illegal fh argument, either not an OS file or read/write mode mismatch");
-
-  return fd;
-}
 
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
@@ -704,7 +640,7 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
            aio_fdatasync = EIO_FDATASYNC
 	PPCODE:
 {
-  	int fd = extract_fd (fh, 0);
+  	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         req->type = ix;
@@ -719,7 +655,7 @@ aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback
 	PROTOTYPE: $$$$;$
 	PPCODE:
 {
-  	int fd = extract_fd (fh, 0);
+  	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         req->type = EIO_SYNC_FILE_RANGE;
@@ -738,7 +674,7 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
         static int close_pipe = -1; /* dummy fd to close fds via dup2 */
-  	int fd = extract_fd (fh, 0);
+  	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         if (close_pipe < 0)
@@ -770,7 +706,7 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
         PPCODE:
 {
         STRLEN svlen;
-        int fd = extract_fd (fh, ix == EIO_WRITE);
+        int fd = s_fileno_croak (fh, ix == EIO_WRITE);
         char *svptr = SvPVbyte (data, svlen);
         UV len = SvUV (length);
 
@@ -835,8 +771,8 @@ aio_sendfile (SV *out_fh, SV *in_fh, off_t in_offset, size_t length, SV *callbac
 	PROTOTYPE: $$$$;$
         PPCODE:
 {
-  	int ifd = extract_fd (in_fh , 0);
-  	int ofd = extract_fd (out_fh, 0);
+  	int ifd = s_fileno_croak (in_fh , 0);
+  	int ofd = s_fileno_croak (out_fh, 1);
 	dREQ;
 
         req->type = EIO_SENDFILE;
@@ -855,7 +791,7 @@ aio_readahead (SV *fh, off_t offset, size_t length, SV *callback=&PL_sv_undef)
 	PROTOTYPE: $$$;$
         PPCODE:
 {
-  	int fd = extract_fd (fh, 0);
+  	int fd = s_fileno_croak (fh, 0);
 	dREQ;
 
         req->type = EIO_READAHEAD;
@@ -1141,7 +1077,7 @@ int
 poll_fileno()
 	PROTOTYPE:
 	CODE:
-        RETVAL = respipe [0];
+        RETVAL = s_epipe_fd (&respipe);
 	OUTPUT:
 	RETVAL
 
@@ -1232,7 +1168,7 @@ cb (aio_req_ornot req, SV *callback=&PL_sv_undef)
 
         if (items > 1)
           {
-            SV *cb_cv = get_cb (callback);
+            SV *cb_cv =get_cb (callback);
 
             SvREFCNT_dec (req->callback);
             req->callback = SvREFCNT_inc (cb_cv);
