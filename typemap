@@ -13,7 +13,7 @@ INPUT
 
 T_AIO
 	if (!($var = SvAIO_REQ ($arg)))
-          croak (\"busy \" AIO_REQ_KLASS \" object expected\")
+          croak (\"busy IO::AIO::REQ object expected\")
 
 T_AIO_ORNOT
 	if (!($var = SvAIO_REQ ($arg)))

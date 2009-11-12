@@ -514,7 +514,7 @@ FUNCTIONS
     aio_copy $srcpath, $dstpath, $callback->($status)
         Try to copy the *file* (directories not supported as either source
         or destination) from $srcpath to $dstpath and call the callback with
-        the 0 (error) or -1 ok.
+        a status of 0 (ok) or -1 (error, see $!).
 
         This is a composite request that creates the destination file with
         mode 0200 and copies the contents of the source file into it using
@@ -528,7 +528,7 @@ FUNCTIONS
     aio_move $srcpath, $dstpath, $callback->($status)
         Try to move the *file* (directories not supported as either source
         or destination) from $srcpath to $dstpath and call the callback with
-        the 0 (error) or -1 ok.
+        a status of 0 (ok) or -1 (error, see $!).
 
         This is a composite request that tries to rename(2) the file first;
         if rename fails with "EXDEV", it copies the file with "aio_copy"

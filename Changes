@@ -7,6 +7,11 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 
+3.31 Thu Nov 12 02:14:29 CET 2009
+	- fix result status documentation of aio_copy, aio_move.
+        - speed up object creation considerably by avoiding
+          hash lookups.
+
 3.3  Wed Aug  5 13:52:58 CEST 2009
 	- use common::sense.
         - use common schmorp.h header.
@@ -15,12 +20,12 @@ TODO: fallocate, if it wouldn't be so useless.
         - use poll not select on posix platforms.
 
 3.261 Wed Jul  1 10:11:51 CEST 2009
-	- more OS X workarounds (patch by Tokuhiro Matsuno).
+	- more 0S X workarounds (patch by Tokuhiro Matsuno).
 
 3.26 Tue Jun 30 09:33:26 CEST 2009
-	- os x of course claims posix 2008 but lacks posix_fadvise. try to work
-          around this horribly broken OS in a somewhat hackish way. might help
-          other os's too.
+        - 0S X of course claims to be posix 2008 but lacks posix_fadvise.
+          try to work around this horribly broken OS in a somewhat hackish
+          way. might help other os's too.
 
 3.25 Sat Jun 27 05:18:26 CEST 2009
         - added IO::AIO::fadvise and IO::AIO::sendfile.

@@ -101,13 +101,11 @@
 
 /*****************************************************************************/
 
-static HV *stash;
 typedef SV SV8; /* byte-sv, used for argument-checking */
 typedef int aio_rfd; /* read file desriptor */
 typedef int aio_wfd; /* write file descriptor */
 
-#define AIO_REQ_KLASS "IO::AIO::REQ"
-#define AIO_GRP_KLASS "IO::AIO::GRP"
+static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 
 #define EIO_REQ_MEMBERS	\
   SV *callback;		\
@@ -180,7 +178,7 @@ static void done_poll (void)
 }
 
 /* must be called at most once */
-static SV *req_sv (aio_req req, const char *klass)
+static SV *req_sv (aio_req req, HV *stash)
 {
   if (!req->self)
     {
@@ -188,15 +186,18 @@ static SV *req_sv (aio_req req, const char *klass)
       sv_magic (req->self, 0, PERL_MAGIC_ext, (char *)req, 0);
     }
 
-  return sv_2mortal (sv_bless (newRV_inc (req->self), gv_stashpv (klass, 1)));
+  return sv_2mortal (sv_bless (newRV_inc (req->self), stash));
 }
 
 static aio_req SvAIO_REQ (SV *sv)
 {
   MAGIC *mg;
 
-  if (!sv_derived_from (sv, AIO_REQ_KLASS) || !SvROK (sv))
-    croak ("object of class " AIO_REQ_KLASS " expected");
+  if (!SvROK (sv)
+      || (SvSTASH (SvRV (sv)) != aio_grp_stash
+          && SvSTASH (SvRV (sv)) != aio_req_stash
+          && !sv_derived_from (sv, "IO::AIO::REQ")))
+    croak ("object of class IO::AIO::REQ expected");
 
   mg = mg_find (SvRV (sv), PERL_MAGIC_ext);
 
@@ -212,7 +213,7 @@ static void aio_grp_feed (aio_req grp)
       ENTER;
       SAVETMPS;
       PUSHMARK (SP);
-      XPUSHs (req_sv (grp, AIO_GRP_KLASS));
+      XPUSHs (req_sv (grp, aio_grp_stash));
       PUTBACK;
       call_sv (grp->sv2, G_VOID | G_EVAL | G_KEEPERR);
       SPAGAIN;
@@ -328,7 +329,7 @@ static int req_invoke (eio_req *req)
                   int symlen;
                   
                   symlen = snprintf (sym, sizeof (sym), "fd#%d", (int)req->result);
-                  gv_init (gv, stash, sym, symlen, 0);
+                  gv_init (gv, aio_stash, sym, symlen, 0);
 
                   symlen = snprintf (
                      sym,
@@ -516,7 +517,7 @@ get_cb (SV *cb_sv)
   SPAGAIN;							\
 								\
   if (GIMME_V != G_VOID)					\
-    XPUSHs (req_sv (req, AIO_REQ_KLASS));
+    XPUSHs (req_sv (req, aio_req_stash));
 
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
@@ -566,10 +567,12 @@ BOOT:
     const_eio (DT_WHT)
   };
 
-  stash = gv_stashpv ("IO::AIO", 1);
+  aio_stash     = gv_stashpv ("IO::AIO"     , 1);
+  aio_req_stash = gv_stashpv ("IO::AIO::REQ", 1);
+  aio_grp_stash = gv_stashpv ("IO::AIO::GRP", 1);
 
   for (civ = const_iv + sizeof (const_iv) / sizeof (const_iv [0]); civ-- > const_iv; )
-    newCONSTSUB (stash, (char *)civ->name, newSViv (civ->iv));
+    newCONSTSUB (aio_stash, (char *)civ->name, newSViv (civ->iv));
 
   create_respipe ();
 
@@ -1015,7 +1018,7 @@ aio_group (SV *callback=&PL_sv_undef)
         req->type = EIO_GROUP;
 
         req_submit (req);
-        XPUSHs (req_sv (req, AIO_GRP_KLASS));
+        XPUSHs (req_sv (req, aio_grp_stash));
 }
 
 void
