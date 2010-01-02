@@ -547,6 +547,12 @@ BOOT:
     const_iv (FADV_WILLNEED  , POSIX_FADV_WILLNEED)
     const_iv (FADV_DONTNEED  , POSIX_FADV_DONTNEED)
 
+    const_eio (MS_ASYNC)
+    const_eio (MS_INVALIDATE)
+    const_eio (MS_SYNC)
+
+    const_eio (MT_MODIFY)
+
     const_eio (SYNC_FILE_RANGE_WAIT_BEFORE)
     const_eio (SYNC_FILE_RANGE_WRITE)
     const_eio (SYNC_FILE_RANGE_WAIT_AFTER)
@@ -997,6 +1003,40 @@ aio_mknod (SV8 *pathname, int mode, UV dev, SV *callback=&PL_sv_undef)
 }
 
 void
+aio_mtouch (SV8 *data, IV offset = 0, SV *length = &PL_sv_undef, int flags = 0, SV *callback=&PL_sv_undef)
+        ALIAS:
+           aio_mtouch = EIO_MTOUCH
+           aio_msync  = EIO_MSYNC
+	PROTOTYPE: $$$$;$
+        PPCODE:
+{
+        STRLEN svlen;
+        UV len = SvUV (length);
+        char *svptr = SvPVbyte (data, svlen);
+
+        if (offset < 0)
+          offset += svlen;
+
+        if (offset < 0 || offset > svlen)
+          croak ("offset outside of scalar");
+
+        if (!SvOK (length) || len + offset > svlen)
+          len = svlen - offset;
+
+        {
+          dREQ;
+
+          req->type = ix;
+          req->size = len;
+          req->sv2  = SvREFCNT_inc (data);
+          req->ptr2 = (char *)svptr + offset;
+          req->int1 = flags;
+
+          REQ_SEND;
+        }
+}
+
+void
 aio_busy (double delay, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
@@ -1146,7 +1186,9 @@ ssize_t
 sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
         PROTOTYPE: $$$$
         CODE:
-        eio_sendfile_sync (ofh, ifh, offset, count);
+        RETVAL = eio_sendfile_sync (ofh, ifh, offset, count);
+	OUTPUT:
+        RETVAL
 
 void _on_next_submit (SV *cb)
 	CODE:

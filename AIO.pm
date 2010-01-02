@@ -193,7 +193,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.31';
+   our $VERSION = '3.4';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -201,7 +201,8 @@ BEGIN {
                      aio_fdatasync aio_sync_file_range aio_pathsync aio_readahead
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
-                     aio_chmod aio_utime aio_truncate);
+                     aio_chmod aio_utime aio_truncate
+                     aio_msync aio_mtouch);
 
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
@@ -382,9 +383,10 @@ This call tries to make use of a native C<sendfile> syscall to provide
 zero-copy operation. For this to work, C<$out_fh> should refer to a
 socket, and C<$in_fh> should refer to mmap'able file.
 
-If the native sendfile call fails or is not implemented, it will be
-emulated, so you can call C<aio_sendfile> on any type of filehandle
-regardless of the limitations of the operating system.
+If a native sendfile cannot be found or it fails with C<ENOSYS>,
+C<ENOTSUP>, C<EOPNOTSUPP>, C<EAFNOSUPPORT>, C<EPROTOTYPE> or C<ENOTSOCK>,
+it will be emulated, so you can call C<aio_sendfile> on any type of
+filehandle regardless of the limitations of the operating system.
 
 Please note, however, that C<aio_sendfile> can read more bytes from
 C<$in_fh> than are written, and there is no way to find out how many
@@ -991,6 +993,32 @@ sub aio_pathsync($;$) {
    $grp
 }
 
+=item aio_msync $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
+
+This is a rather advanced IO::AIO call, which only works on mmap(2)ed
+scalars (see the L<Sys::Mmap> or L<Mmap> modules for details on this, note
+that the scalar must only be modified in-place while an aio operation is
+pending on it).
+
+It calls the C<msync> function of your OS, if available, with the memory
+area starting at C<$offset> in the string and ending C<$length> bytes
+later. If C<$length> is negative, counts from the end, and if C<$length>
+is C<undef>, then it goes till the end of the string. The flags can be
+a combination of C<IO::AIO::MS_ASYNC>, C<IO::AIO::MS_INVALIDATE> and
+C<IO::AIO::MS_SYNC>.
+
+=item aio_mtouch $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
+
+This is a rather advanced IO::AIO call, which works best on mmap(2)ed
+scalars.
+
+It touches (reads or writes) all memory pages in the specified
+range inside the scalar.  All caveats and parameters are the same
+as for C<aio_msync>, above, except for flags, which must be either
+C<0> (which reads all pages and ensures they are instantiated) or
+C<IO::AIO::MT_MODIFY>, which modifies the memory page s(by reading and
+writing an octet from it, which dirties the page).
+
 =item aio_group $callback->(...)
 
 This is a very special aio request: Instead of doing something, it is a
@@ -1134,6 +1162,9 @@ Returns all its arguments.
 
 Cancel all subrequests and clears any feeder, but not the group request
 itself. Useful when you queued a lot of events but got a result early.
+
+The group request will finish normally (you cannot add requests to the
+group).
 
 =item $grp->result (...)
 

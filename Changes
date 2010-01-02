@@ -6,6 +6,15 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
+TODO: IO::AIO::mmap? aio_mincore?
+
+3.4  Sat Jan  2 15:13:04 CET 2010
+	- (libeio) max_poll_time was not properly converted to ticks.
+        - clarify cancel_subs description.
+        - IO::AIO::sendfile did not actually return the return value
+          from the sendfile call.
+        - implement aio_msync, aio_mtouch.
+        - (libeio) tentatively support darwin in sendfile.
 
 3.31 Thu Nov 12 02:14:29 CET 2009
 	- fix result status documentation of aio_copy, aio_move.

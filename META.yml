@@ -11,7 +11,7 @@
    },
    "generated_by" : "ExtUtils::MakeMaker version 6.54",
    "distribution_type" : "module",
-   "version" : "3.31",
+   "version" : "3.4",
    "name" : "IO-AIO",
    "author" : [],
    "license" : "unknown",
