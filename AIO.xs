@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <sched.h>
@@ -140,6 +141,46 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 
 #ifndef POSIX_FADV_DONTNEED
 # define POSIX_FADV_DONTNEED 0
+#endif
+
+#ifndef ST_NODEV
+# define ST_NODEV       0
+#endif
+
+#ifndef ST_NOEXEC
+# define ST_NOEXEC      0
+#endif
+
+#ifndef ST_SYNCHRONOUS
+# define ST_SYNCHRONOUS 0
+#endif
+
+#ifndef ST_MANDLOCK
+# define ST_MANDLOCK    0
+#endif
+
+#ifndef ST_WRITE
+# define ST_WRITE       0
+#endif
+
+#ifndef ST_APPEND
+# define ST_APPEND      0
+#endif
+
+#ifndef ST_IMMUTABLE
+# define ST_IMMUTABLE   0
+#endif
+
+#ifndef ST_NOATIME
+# define ST_NOATIME     0
+#endif
+
+#ifndef ST_NODIRATIME
+# define ST_NODIRATIME  0
+#endif
+
+#ifndef ST_RELATIME
+# define ST_RELATIME    0
 #endif
 
 static int req_invoke    (eio_req *req);
@@ -347,6 +388,36 @@ static int req_invoke (eio_req *req)
             }
             break;
 
+          case EIO_STATVFS:
+          case EIO_FSTATVFS:
+            {
+              SV *rv = &PL_sv_undef;
+             
+              if (req->result >= 0)
+                {
+                  EIO_STRUCT_STATVFS *f = EIO_STATVFS_BUF (req);
+                  HV *hv = newHV ();
+
+                  rv = sv_2mortal (newRV_noinc ((SV *)hv));
+
+                  hv_store (hv, "bsize"  , sizeof ("bsize"  ) - 1, newSVval64 (f->f_bsize  ), 0);
+                  hv_store (hv, "frsize" , sizeof ("frsize" ) - 1, newSVval64 (f->f_frsize ), 0);
+                  hv_store (hv, "blocks" , sizeof ("blocks" ) - 1, newSVval64 (f->f_blocks ), 0);
+                  hv_store (hv, "bfree"  , sizeof ("bfree"  ) - 1, newSVval64 (f->f_bfree  ), 0);
+                  hv_store (hv, "bavail" , sizeof ("bavail" ) - 1, newSVval64 (f->f_bavail ), 0);
+                  hv_store (hv, "files"  , sizeof ("files"  ) - 1, newSVval64 (f->f_files  ), 0);
+                  hv_store (hv, "ffree"  , sizeof ("ffree"  ) - 1, newSVval64 (f->f_ffree  ), 0);
+                  hv_store (hv, "favail" , sizeof ("favail" ) - 1, newSVval64 (f->f_favail ), 0);
+                  hv_store (hv, "fsid"   , sizeof ("fsid"   ) - 1, newSVval64 (f->f_fsid   ), 0);
+                  hv_store (hv, "flag"   , sizeof ("flag"   ) - 1, newSVval64 (f->f_flag   ), 0);
+                  hv_store (hv, "namemax", sizeof ("namemax") - 1, newSVval64 (f->f_namemax), 0);
+                }
+
+              PUSHs (rv);
+            }
+
+            break;
+
           case EIO_GROUP:
             req->int1 = 2; /* mark group as finished */
 
@@ -546,6 +617,19 @@ BOOT:
     const_iv (FADV_NOREUSE   , POSIX_FADV_NOREUSE)
     const_iv (FADV_WILLNEED  , POSIX_FADV_WILLNEED)
     const_iv (FADV_DONTNEED  , POSIX_FADV_DONTNEED)
+
+    const_iv (ST_RDONLY      , ST_RDONLY)
+    const_iv (ST_NOSUID      , ST_NOSUID)
+    const_iv (ST_NODEV       , ST_NODEV)
+    const_iv (ST_NOEXEC      , ST_NOEXEC)
+    const_iv (ST_SYNCHRONOUS , ST_SYNCHRONOUS)
+    const_iv (ST_MANDLOCK    , ST_MANDLOCK)
+    const_iv (ST_WRITE       , ST_WRITE)
+    const_iv (ST_APPEND      , ST_APPEND)
+    const_iv (ST_IMMUTABLE   , ST_IMMUTABLE)
+    const_iv (ST_NOATIME     , ST_NOATIME)
+    const_iv (ST_NODIRATIME  , ST_NODIRATIME)
+    const_iv (ST_RELATIME    , ST_RELATIME)
 
     const_eio (MS_ASYNC)
     const_eio (MS_INVALIDATE)
@@ -815,8 +899,9 @@ aio_readahead (SV *fh, off_t offset, size_t length, SV *callback=&PL_sv_undef)
 void
 aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
         ALIAS:
-           aio_stat  = EIO_STAT
-           aio_lstat = EIO_LSTAT
+           aio_stat    = EIO_STAT
+           aio_lstat   = EIO_LSTAT
+           aio_statvfs = EIO_STATVFS
 	PPCODE:
 {
 	dREQ;
@@ -830,7 +915,7 @@ aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
           }
         else
           {
-            req->type = EIO_FSTAT;
+            req->type = ix == EIO_STATVFS ? EIO_FSTATVFS : EIO_FSTAT;
             req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
           }
 

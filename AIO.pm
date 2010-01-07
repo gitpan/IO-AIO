@@ -193,7 +193,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.4';
+   our $VERSION = '3.5';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -202,7 +202,7 @@ BEGIN {
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate
-                     aio_msync aio_mtouch);
+                     aio_msync aio_mtouch aio_statvfs);
 
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
@@ -432,6 +432,51 @@ Example: Print the length of F</etc/passwd>:
       $_[0] and die "stat failed: $!";
       print "size is ", -s _, "\n";
    };
+
+
+=item aio_statvfs  $fh_or_path, $callback->($statvfs)
+
+Works like the POSIX C<statvfs> or C<fstatvfs> syscalls, depending on
+whether a file handle or path was passed.
+
+On success, the callback is passed a hash reference with the following
+members: C<bsize>, C<frsize>, C<blocks>, C<bfree>, C<bavail>, C<files>,
+C<ffree>, C<favail>, C<fsid>, C<flag> and C<namemax>. On failure, C<undef>
+is passed.
+
+The following POSIX IO::AIO::ST_* constants are defined: C<ST_RDONLY> and
+C<ST_NOSUID>.
+
+The following non-POSIX IO::AIO::ST_* flag masks are defined to
+their correct value when available, or to C<0> on systems that do
+not support them:  C<ST_NODEV>, C<ST_NOEXEC>, C<ST_SYNCHRONOUS>,
+C<ST_MANDLOCK>, C<ST_WRITE>, C<ST_APPEND>, C<ST_IMMUTABLE>, C<ST_NOATIME>,
+C<ST_NODIRATIME> and C<ST_RELATIME>.
+
+Example: stat C</wd> and dump out the data if successful.
+
+   aio_statvfs "/wd", sub {
+      my $f = $_[0]
+         or die "statvfs: $!";
+
+      use Data::Dumper;
+      say Dumper $f;
+   };
+
+   # result:
+   {
+      bsize   => 1024,
+      bfree   => 4333064312,
+      blocks  => 10253828096,
+      files   => 2050765568,
+      flag    => 4096,
+      favail  => 2042092649,
+      bavail  => 4333064312,
+      ffree   => 2042092649,
+      namemax => 255,
+      frsize  => 1024,
+      fsid    => 1810
+   }
 
 
 =item aio_utime $fh_or_path, $atime, $mtime, $callback->($status)

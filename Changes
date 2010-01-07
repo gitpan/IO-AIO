@@ -8,6 +8,14 @@ TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 TODO: IO::AIO::mmap? aio_mincore?
 
+3.5  Thu Jan  7 21:25:04 CET 2010
+	- (liebio) fix freebsd sendfile (Vanilla Hsu).
+        - (libeio) also fix darwin sendfile that suffered from a similar bug.
+        - add aio_statvfs as interface to statvfs/fstatvfs.
+        - work around buggy symlink() on cygwin in the testsuite.
+        - wtf. freebsd-8.0 actually passes the testsuite! I knew
+          they could implement fork and semaphores one day! cheers!
+
 3.4  Sat Jan  2 15:13:04 CET 2010
 	- (libeio) max_poll_time was not properly converted to ticks.
         - clarify cancel_subs description.

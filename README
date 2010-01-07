@@ -365,6 +365,49 @@ FUNCTIONS
               print "size is ", -s _, "\n";
            };
 
+    aio_statvfs $fh_or_path, $callback->($statvfs)
+        Works like the POSIX "statvfs" or "fstatvfs" syscalls, depending on
+        whether a file handle or path was passed.
+
+        On success, the callback is passed a hash reference with the
+        following members: "bsize", "frsize", "blocks", "bfree", "bavail",
+        "files", "ffree", "favail", "fsid", "flag" and "namemax". On
+        failure, "undef" is passed.
+
+        The following POSIX IO::AIO::ST_* constants are defined: "ST_RDONLY"
+        and "ST_NOSUID".
+
+        The following non-POSIX IO::AIO::ST_* flag masks are defined to
+        their correct value when available, or to 0 on systems that do not
+        support them: "ST_NODEV", "ST_NOEXEC", "ST_SYNCHRONOUS",
+        "ST_MANDLOCK", "ST_WRITE", "ST_APPEND", "ST_IMMUTABLE",
+        "ST_NOATIME", "ST_NODIRATIME" and "ST_RELATIME".
+
+        Example: stat "/wd" and dump out the data if successful.
+
+           aio_statvfs "/wd", sub {
+              my $f = $_[0]
+                 or die "statvfs: $!";
+
+              use Data::Dumper;
+              say Dumper $f;
+           };
+
+           # result:
+           {
+              bsize   => 1024,
+              bfree   => 4333064312,
+              blocks  => 10253828096,
+              files   => 2050765568,
+              flag    => 4096,
+              favail  => 2042092649,
+              bavail  => 4333064312,
+              ffree   => 2042092649,
+              namemax => 255,
+              frsize  => 1024,
+              fsid    => 1810
+           }
+
     aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
         Works like perl's "utime" function (including the special case of
         $atime and $mtime being undef). Fractional times are supported if
