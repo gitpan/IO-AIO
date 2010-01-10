@@ -28,29 +28,6 @@ IO::AIO - Asynchronous Input/Output
  my $grp = aio_group sub { print "all stats done\n" };
  add $grp aio_stat "..." for ...;
 
- # AnyEvent integration (EV, Event, Glib, Tk, POE, urxvt, pureperl...)
- use AnyEvent::AIO;
-
- # EV integration
- my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
-
- # Event integration
- Event->io (fd => IO::AIO::poll_fileno,
-            poll => 'r',
-            cb => \&IO::AIO::poll_cb);
-
- # Glib/Gtk2 integration
- add_watch Glib::IO IO::AIO::poll_fileno,
-           in => sub { IO::AIO::poll_cb; 1 };
-
- # Tk integration
- Tk::Event::IO->fileevent (IO::AIO::poll_fileno, "",
-                           readable => \&IO::AIO::poll_cb);
-
- # Danga::Socket integration
- Danga::Socket->AddOtherFds (IO::AIO::poll_fileno =>
-                             \&IO::AIO::poll_cb);
-
 =head1 DESCRIPTION
 
 This module implements asynchronous I/O using whatever means your
@@ -193,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.5';
+   our $VERSION = '3.6';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -220,6 +197,74 @@ BEGIN {
 }
 
 =head1 FUNCTIONS
+
+=head2 QUICK OVERVIEW
+
+This section simply lists the prototypes of the most important functions
+for quick reference. See the following sections for function-by-function
+documentation.
+
+   aio_open $pathname, $flags, $mode, $callback->($fh)
+   aio_close $fh, $callback->($status)
+   aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
+   aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
+   aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
+   aio_readahead $fh,$offset,$length, $callback->($retval)
+   aio_stat  $fh_or_path, $callback->($status)
+   aio_lstat $fh, $callback->($status)
+   aio_statvfs $fh_or_path, $callback->($statvfs)
+   aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
+   aio_chown $fh_or_path, $uid, $gid, $callback->($status)
+   aio_truncate $fh_or_path, $offset, $callback->($status)
+   aio_chmod $fh_or_path, $mode, $callback->($status)
+   aio_unlink $pathname, $callback->($status)
+   aio_mknod $path, $mode, $dev, $callback->($status)
+   aio_link $srcpath, $dstpath, $callback->($status)
+   aio_symlink $srcpath, $dstpath, $callback->($status)
+   aio_readlink $path, $callback->($link)
+   aio_rename $srcpath, $dstpath, $callback->($status)
+   aio_mkdir $pathname, $mode, $callback->($status)
+   aio_rmdir $pathname, $callback->($status)
+   aio_readdir $pathname, $callback->($entries)
+   aio_readdirx $pathname, $flags, $callback->($entries, $flags)
+      IO::AIO::READDIR_DENTS IO::AIO::READDIR_DIRS_FIRST
+      IO::AIO::READDIR_STAT_ORDER IO::AIO::READDIR_FOUND_UNKNOWN
+   aio_load $path, $data, $callback->($status)
+   aio_copy $srcpath, $dstpath, $callback->($status)
+   aio_move $srcpath, $dstpath, $callback->($status)
+   aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
+   aio_rmtree $path, $callback->($status)
+   aio_sync $callback->($status)
+   aio_fsync $fh, $callback->($status)
+   aio_fdatasync $fh, $callback->($status)
+   aio_sync_file_range $fh, $offset, $nbytes, $flags, $callback->($status)
+   aio_pathsync $path, $callback->($status)
+   aio_msync $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
+   aio_mtouch $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
+   aio_group $callback->(...)
+   aio_nop $callback->()
+
+   $prev_pri = aioreq_pri [$pri]
+   aioreq_nice $pri_adjust
+
+   IO::AIO::poll_wait
+   IO::AIO::poll_cb
+   IO::AIO::poll
+   IO::AIO::flush
+   IO::AIO::max_poll_reqs $nreqs
+   IO::AIO::max_poll_time $seconds
+   IO::AIO::min_parallel $nthreads
+   IO::AIO::max_parallel $nthreads
+   IO::AIO::max_idle $nthreads
+   IO::AIO::max_outstanding $maxreqs
+   IO::AIO::nreqs
+   IO::AIO::nready
+   IO::AIO::npending
+
+   IO::AIO::sendfile $ofh, $ifh, $offset, $count
+   IO::AIO::fadvise $fh, $offset, $len, $advice
+   IO::AIO::mlockall $flags
+   IO::AIO::munlockall
 
 =head2 AIO REQUEST FUNCTIONS
 
@@ -381,7 +426,7 @@ other.
 
 This call tries to make use of a native C<sendfile> syscall to provide
 zero-copy operation. For this to work, C<$out_fh> should refer to a
-socket, and C<$in_fh> should refer to mmap'able file.
+socket, and C<$in_fh> should refer to an mmap'able file.
 
 If a native sendfile cannot be found or it fails with C<ENOSYS>,
 C<ENOTSUP>, C<EOPNOTSUPP>, C<EAFNOSUPPORT>, C<EPROTOTYPE> or C<ENOTSOCK>,
@@ -434,7 +479,7 @@ Example: Print the length of F</etc/passwd>:
    };
 
 
-=item aio_statvfs  $fh_or_path, $callback->($statvfs)
+=item aio_statvfs $fh_or_path, $callback->($statvfs)
 
 Works like the POSIX C<statvfs> or C<fstatvfs> syscalls, depending on
 whether a file handle or path was passed.
@@ -1041,9 +1086,10 @@ sub aio_pathsync($;$) {
 =item aio_msync $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
 
 This is a rather advanced IO::AIO call, which only works on mmap(2)ed
-scalars (see the L<Sys::Mmap> or L<Mmap> modules for details on this, note
-that the scalar must only be modified in-place while an aio operation is
-pending on it).
+scalars (see the C<IO::AIO::mmap> function, although it also works on data
+scalars managed by the L<Sys::Mmap> or L<Mmap> modules, note that the
+scalar must only be modified in-place while an aio operation is pending on
+it).
 
 It calls the C<msync> function of your OS, if available, with the memory
 area starting at C<$offset> in the string and ending C<$length> bytes
@@ -1314,6 +1360,33 @@ SYNOPSIS section, at the top of this document):
               poll => 'r', async => 1,
               cb => \&IO::AIO::poll_cb);
 
+=item IO::AIO::poll_wait
+
+If there are any outstanding requests and none of them in the result
+phase, wait till the result filehandle becomes ready for reading (simply
+does a C<select> on the filehandle. This is useful if you want to
+synchronously wait for some requests to finish).
+
+See C<nreqs> for an example.
+
+=item IO::AIO::poll
+
+Waits until some requests have been handled.
+
+Returns the number of requests processed, but is otherwise strictly
+equivalent to:
+
+   IO::AIO::poll_wait, IO::AIO::poll_cb
+
+=item IO::AIO::flush
+
+Wait till all outstanding AIO requests have been handled.
+
+Strictly equivalent to:
+
+   IO::AIO::poll_wait, IO::AIO::poll_cb
+      while IO::AIO::nreqs;
+
 =item IO::AIO::max_poll_reqs $nreqs
 
 =item IO::AIO::max_poll_time $seconds
@@ -1346,33 +1419,6 @@ program get the CPU sometimes even under high AIO load.
    Event->io (fd => IO::AIO::poll_fileno,
               poll => 'r', nice => 1,
               cb => &IO::AIO::poll_cb);
-
-=item IO::AIO::poll_wait
-
-If there are any outstanding requests and none of them in the result
-phase, wait till the result filehandle becomes ready for reading (simply
-does a C<select> on the filehandle. This is useful if you want to
-synchronously wait for some requests to finish).
-
-See C<nreqs> for an example.
-
-=item IO::AIO::poll
-
-Waits until some requests have been handled.
-
-Returns the number of requests processed, but is otherwise strictly
-equivalent to:
-
-   IO::AIO::poll_wait, IO::AIO::poll_cb
-
-=item IO::AIO::flush
-
-Wait till all outstanding AIO requests have been handled.
-
-Strictly equivalent to:
-
-   IO::AIO::poll_wait, IO::AIO::poll_cb
-      while IO::AIO::nreqs;
 
 =back
 
@@ -1502,6 +1548,75 @@ C<IO::AIO::FADV_WILLNEED>, C<IO::AIO::FADV_DONTNEED>.
 On systems that do not implement C<posix_fadvise>, this function returns
 ENOSYS, otherwise the return value of C<posix_fadvise>.
 
+=item IO::AIO::mmap $scalar, $length, $prot, $flags, $fh[, $offset]
+
+Memory-maps a file (or anonymous memory range) and attaches it to the
+given C<$scalar>, which will act like a string scalar.
+
+The only operations allowed on the scalar are C<substr>/C<vec> that don't
+change the string length, and most read-only operations such as copying it
+or searching it with regexes and so on.
+
+Anything else is unsafe and will, at best, result in memory leaks.
+
+The memory map associated with the C<$scalar> is automatically removed
+when the C<$scalar> is destroyed, or when the C<IO::AIO::mmap> or
+C<IO::AIO::munmap> functions are called.
+
+This calls the C<mmap>(2) function internally. See your system's manual
+page for details on the C<$length>, C<$prot> and C<$flags> parameters.
+
+The C<$length> must be larger than zero and smaller than the actual
+filesize.
+
+C<$prot> is a combination of C<IO::AIO::PROT_NONE>, C<IO::AIO::PROT_EXEC>,
+C<IO::AIO::PROT_READ> and/or C<IO::AIO::PROT_WRITE>,
+
+C<$flags> can be a combination of C<IO::AIO::MAP_SHARED> or
+C<IO::AIO::MAP_PRIVATE>, or a number of system-specific flags (when
+not available, the are defined as 0): C<IO::AIO::MAP_ANONYMOUS>
+(which is set to C<MAP_ANON> if your system only provides this
+constant), C<IO::AIO::MAP_HUGETLB>, C<IO::AIO::MAP_LOCKED>,
+C<IO::AIO::MAP_NORESERVE>, C<IO::AIO::MAP_POPULATE> or
+C<IO::AIO::MAP_NONBLOCK>
+
+If C<$fh> is C<undef>, then a file descriptor of C<-1> is passed.
+
+C<$offset> is the offset from the start of the file - it generally must be
+a multiple of C<IO::AIO::PAGESIZE> and defaults to C<0>.
+
+Example:
+
+   use Digest::MD5;
+   use IO::AIO;
+
+   open my $fh, "<verybigfile"
+      or die "$!";
+
+   IO::AIO::mmap my $data, -s $fh, IO::AIO::PROT_READ, IO::AIO::MAP_SHARED, $fh
+      or die "verybigfile: $!";
+
+   my $fast_md5 = md5 $data;
+
+=item IO::AIO::munmap $scalar
+
+Removes a previous mmap and undefines the C<$scalar>.
+
+=item IO::AIO::mlockall $flags
+
+Calls the C<mlockall> function with the given C<$flags> (a combination of
+C<IO::AIO::MCL_CURRENT> and C<IO::AIO::MCL__FUTURE>).
+
+On systems that do not implement C<mlockall>, this function returns
+ENOSYS, otherwise the return value of C<mlockall>.
+
+=item IO::AIO::munlockall
+
+Calls the C<munlockall> function.
+
+On systems that do not implement C<munlockall>, this function returns
+ENOSYS, otherwise the return value of C<munlockall>.
+
 =back
 
 =cut
@@ -1511,6 +1626,37 @@ min_parallel 8;
 END { flush }
 
 1;
+
+=head1 EVENT LOOP INTEGRATION
+
+It is recommended to use L<AnyEvent::AIO> to integrate IO::AIO
+automatically into many event loops:
+
+ # AnyEvent integration (EV, Event, Glib, Tk, POE, urxvt, pureperl...)
+ use AnyEvent::AIO;
+
+You can also integrate IO::AIO manually into many event loops, here are
+some examples of how to do this:
+
+ # EV integration
+ my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
+
+ # Event integration
+ Event->io (fd => IO::AIO::poll_fileno,
+            poll => 'r',
+            cb => \&IO::AIO::poll_cb);
+
+ # Glib/Gtk2 integration
+ add_watch Glib::IO IO::AIO::poll_fileno,
+           in => sub { IO::AIO::poll_cb; 1 };
+
+ # Tk integration
+ Tk::Event::IO->fileevent (IO::AIO::poll_fileno, "",
+                           readable => \&IO::AIO::poll_cb);
+
+ # Danga::Socket integration
+ Danga::Socket->AddOtherFds (IO::AIO::poll_fileno =>
+                             \&IO::AIO::poll_cb);
 
 =head2 FORK BEHAVIOUR
 

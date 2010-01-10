@@ -6,7 +6,15 @@ TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
-TODO: IO::AIO::mmap? aio_mincore?
+TODO: aio_mincore?
+
+3.6  Mon Jan 11 00:43:39 CET 2010
+	- (libeio) more fixes for the freebsd/apple sendfile - broken by
+          manpage standards, but apparently correct accoridng to actual
+          kernel sources.
+        - add IO::AIO::mmap/munmap support.
+        - add IO::AIO::m(un)lockall support.
+        - clean up manpage.
 
 3.5  Thu Jan  7 21:25:04 CET 2010
 	- (liebio) fix freebsd sendfile (Vanilla Hsu).

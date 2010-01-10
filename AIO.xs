@@ -18,6 +18,10 @@
 #include <fcntl.h>
 #include <sched.h>
 
+#if _POSIX_MEMLOCK || _POSIX_MAPPED_FILES
+# include <sys/mman.h>
+#endif
+
 /* perl namespace pollution */
 #undef VERSION
 
@@ -122,23 +126,18 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define POSIX_FADV_NORMAL 0
 # define NO_FADVISE 1
 #endif
-
 #ifndef POSIX_FADV_SEQUENTIAL
 # define POSIX_FADV_SEQUENTIAL 0
 #endif
-
 #ifndef POSIX_FADV_RANDOM
 # define POSIX_FADV_RANDOM 0
 #endif
-
 #ifndef POSIX_FADV_NOREUSE
 # define POSIX_FADV_NOREUSE 0
 #endif
-
 #ifndef POSIX_FADV_WILLNEED
 # define POSIX_FADV_WILLNEED 0
 #endif
-
 #ifndef POSIX_FADV_DONTNEED
 # define POSIX_FADV_DONTNEED 0
 #endif
@@ -146,41 +145,66 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 #ifndef ST_NODEV
 # define ST_NODEV       0
 #endif
-
 #ifndef ST_NOEXEC
 # define ST_NOEXEC      0
 #endif
-
 #ifndef ST_SYNCHRONOUS
 # define ST_SYNCHRONOUS 0
 #endif
-
 #ifndef ST_MANDLOCK
 # define ST_MANDLOCK    0
 #endif
-
 #ifndef ST_WRITE
 # define ST_WRITE       0
 #endif
-
 #ifndef ST_APPEND
 # define ST_APPEND      0
 #endif
-
 #ifndef ST_IMMUTABLE
 # define ST_IMMUTABLE   0
 #endif
-
 #ifndef ST_NOATIME
 # define ST_NOATIME     0
 #endif
-
 #ifndef ST_NODIRATIME
 # define ST_NODIRATIME  0
 #endif
-
 #ifndef ST_RELATIME
 # define ST_RELATIME    0
+#endif
+
+#ifndef MCL_CURRENT
+# define MCL_CURRENT    0
+#endif
+#ifndef MCL_FUTURE
+# define MCL_FUTURE     0
+#endif
+
+#ifndef MAP_ANONYMOUS
+# ifdef MAP_ANON
+#  define MAP_ANONYMOUS MAP_ANON
+# else
+#  define MAP_ANONYMOUS MAP_FIXED /* and hope this fails */
+# endif
+#endif
+#ifndef MAP_HUGETLB
+# define MAP_HUGETLB    0
+#endif
+#ifndef MAP_LOCKED
+# define MAP_LOCKED     0
+#endif
+#ifndef MAP_NORESERVE
+# define MAP_NORESERVE  0
+#endif
+#ifndef MAP_POPULATE
+# define MAP_POPULATE   0
+#endif
+#ifndef MAP_NONBLOCK
+# define MAP_NONBLOCK   0
+#endif
+
+#ifndef PAGESIZE
+# define PAGESIZE sysconf (_SC_PAGESIZE)
 #endif
 
 static int req_invoke    (eio_req *req);
@@ -560,6 +584,39 @@ static void atfork_child (void)
   create_respipe ();
 }
 
+/*****************************************************************************/
+
+#if !_POSIX_MAPPED_FILES
+# define mmap(addr,length,prot,flags,fd,offs) (errno = ENOSYS, -1)
+# define munmap(addr,length)                  (errno = ENOSYS, -1)
+#endif
+
+#define MMAP_MAGIC PERL_MAGIC_ext
+
+static int
+mmap_free (pTHX_ SV *sv, MAGIC *mg)
+{
+  int old_errno = errno;
+  munmap (mg->mg_ptr, (size_t)mg->mg_obj);
+  errno = old_errno;
+
+  mg->mg_obj = 0; /* just in case */
+
+  SvREADONLY_off (sv);
+  SvCUR_set (sv, 0);
+  SvLEN_set (sv, 0);
+  SvPVX (sv) = 0;
+  SvOK_off (sv);
+
+  return 0;
+}
+
+static MGVTBL mmap_vtbl = {
+  0, 0, 0, 0, mmap_free
+};
+
+/*****************************************************************************/
+
 static SV *
 get_cb (SV *cb_sv)
 {
@@ -600,36 +657,57 @@ BOOT:
     const char *name;
     IV iv;
   } *civ, const_iv[] = {
-#   define const_iv(name, value) { # name, (IV) value },
+#   define const_niv(name, value) { # name, (IV) value },
+#   define const_iv(name) { # name, (IV) name },
 #   define const_eio(name) { # name, (IV) EIO_ ## name },
-    const_iv (EXDEV   , EXDEV)
-    const_iv (ENOSYS  , ENOSYS)
-    const_iv (O_RDONLY, O_RDONLY)
-    const_iv (O_WRONLY, O_WRONLY)
-    const_iv (O_CREAT , O_CREAT)
-    const_iv (O_TRUNC , O_TRUNC)
+    const_iv (EXDEV)
+    const_iv (ENOSYS)
+    const_iv (O_RDONLY)
+    const_iv (O_WRONLY)
+    const_iv (O_CREAT)
+    const_iv (O_TRUNC)
 #ifndef _WIN32
-    const_iv (S_IFIFO , S_IFIFO)
+    const_iv (S_IFIFO)
 #endif
-    const_iv (FADV_NORMAL    , POSIX_FADV_NORMAL)
-    const_iv (FADV_SEQUENTIAL, POSIX_FADV_SEQUENTIAL)
-    const_iv (FADV_RANDOM    , POSIX_FADV_RANDOM)
-    const_iv (FADV_NOREUSE   , POSIX_FADV_NOREUSE)
-    const_iv (FADV_WILLNEED  , POSIX_FADV_WILLNEED)
-    const_iv (FADV_DONTNEED  , POSIX_FADV_DONTNEED)
+    const_niv (FADV_NORMAL    , POSIX_FADV_NORMAL)
+    const_niv (FADV_SEQUENTIAL, POSIX_FADV_SEQUENTIAL)
+    const_niv (FADV_RANDOM    , POSIX_FADV_RANDOM)
+    const_niv (FADV_NOREUSE   , POSIX_FADV_NOREUSE)
+    const_niv (FADV_WILLNEED  , POSIX_FADV_WILLNEED)
+    const_niv (FADV_DONTNEED  , POSIX_FADV_DONTNEED)
 
-    const_iv (ST_RDONLY      , ST_RDONLY)
-    const_iv (ST_NOSUID      , ST_NOSUID)
-    const_iv (ST_NODEV       , ST_NODEV)
-    const_iv (ST_NOEXEC      , ST_NOEXEC)
-    const_iv (ST_SYNCHRONOUS , ST_SYNCHRONOUS)
-    const_iv (ST_MANDLOCK    , ST_MANDLOCK)
-    const_iv (ST_WRITE       , ST_WRITE)
-    const_iv (ST_APPEND      , ST_APPEND)
-    const_iv (ST_IMMUTABLE   , ST_IMMUTABLE)
-    const_iv (ST_NOATIME     , ST_NOATIME)
-    const_iv (ST_NODIRATIME  , ST_NODIRATIME)
-    const_iv (ST_RELATIME    , ST_RELATIME)
+    const_iv (ST_RDONLY)
+    const_iv (ST_NOSUID)
+    const_iv (ST_NODEV)
+    const_iv (ST_NOEXEC)
+    const_iv (ST_SYNCHRONOUS)
+    const_iv (ST_MANDLOCK)
+    const_iv (ST_WRITE)
+    const_iv (ST_APPEND)
+    const_iv (ST_IMMUTABLE)
+    const_iv (ST_NOATIME)
+    const_iv (ST_NODIRATIME)
+    const_iv (ST_RELATIME)
+
+    const_iv (PROT_EXEC)
+    const_iv (PROT_NONE)
+    const_iv (PROT_READ)
+    const_iv (PROT_WRITE)
+
+    /*const_iv (MAP_FIXED)*/
+    const_iv (MAP_PRIVATE)
+    const_iv (MAP_SHARED)
+    const_iv (MAP_ANONYMOUS)
+
+    /* linuxish */
+    const_iv (MAP_HUGETLB)
+    const_iv (MAP_LOCKED)
+    const_iv (MAP_NORESERVE)
+    const_iv (MAP_POPULATE)
+    const_iv (MAP_NONBLOCK)
+
+    const_iv (MCL_FUTURE)
+    const_iv (MCL_CURRENT)
 
     const_eio (MS_ASYNC)
     const_eio (MS_INVALIDATE)
@@ -663,6 +741,8 @@ BOOT:
 
   for (civ = const_iv + sizeof (const_iv) / sizeof (const_iv [0]); civ-- > const_iv; )
     newCONSTSUB (aio_stash, (char *)civ->name, newSViv (civ->iv));
+
+  newCONSTSUB (aio_stash, "PAGESIZE", newSViv (PAGESIZE));
 
   create_respipe ();
 
@@ -1262,7 +1342,7 @@ fadvise (aio_rfd fh, off_t offset, off_t length, IV advice)
 #if _XOPEN_SOURCE >= 600 && !NO_FADVISE
         RETVAL = posix_fadvise (fh, offset, length, advice);
 #else
-        RETVAL = errno = ENOSYS;
+        RETVAL = errno = ENOSYS; /* yes, this is actually correct */
 #endif
 	OUTPUT:
         RETVAL
@@ -1273,6 +1353,69 @@ sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
         CODE:
         RETVAL = eio_sendfile_sync (ofh, ifh, offset, count);
 	OUTPUT:
+        RETVAL
+
+void
+mmap (SV *scalar, size_t length, int prot, int flags, SV *fh, off_t offset = 0)
+	PROTOTYPE: $$$$$;$
+	PPCODE:
+        sv_unmagic (scalar, MMAP_MAGIC);
+{
+        int fd = SvOK (fh) ? s_fileno_croak (fh, flags & PROT_WRITE) : -1;
+        void *addr = (void *)mmap (0, length, prot, flags, fd, offset);
+	if (addr == (void *)-1)
+	  XSRETURN_NO;
+
+        /* we store the length in mg_obj, as namlen is I32 :/ */
+        sv_magicext (scalar, 0, MMAP_MAGIC, &mmap_vtbl, (char *)addr, 0)
+          ->mg_obj = (SV *)length;
+
+	SvUPGRADE (scalar, SVt_PV); /* nop... */
+	if (!(prot & PROT_WRITE))
+	  SvREADONLY_on (scalar);
+
+	SvPVX (scalar) = (char *)addr;
+	SvCUR_set (scalar, length);
+	SvLEN_set (scalar, 0);
+	SvPOK_only (scalar);
+
+        XSRETURN_YES;
+}
+
+void
+munmap (SV *scalar)
+	PROTOTYPE: $
+	CODE:
+        sv_unmagic (scalar, MMAP_MAGIC);
+
+int
+mlockall (int flags)
+	PROTOTYPE: $
+        CODE:
+#if _POSIX_MEMLOCK
+#if __GLIBC__ == 2 && __GLIBC_MINOR__ <= 7
+        extern int mallopt (int, int);
+        mallopt (-6, 238); /* http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=473812 */
+#endif
+        mlockall (flags);
+#else
+        RETVAL = -1;
+        errno = ENOSYS;
+#endif
+        OUTPUT:
+        RETVAL
+
+int
+munlockall ()
+	PROTOTYPE:
+        CODE:
+#if _POSIX_MEMLOCK
+        munlockall ();
+#else
+        RETVAL = -1;
+        errno = ENOSYS;
+#endif
+        OUTPUT:
         RETVAL
 
 void _on_next_submit (SV *cb)
