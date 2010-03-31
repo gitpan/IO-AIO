@@ -7,6 +7,17 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 TODO: aio_mincore?
+TODO: posix_madvise.
+
+3.65 Wed Mar 31 02:45:05 CEST 2010
+	- actually use PATH_MAX instead of NAME_MAX for readlink, as to not
+          cut off long pathnames in aio_readlink (based on patch by
+          Rasmus Andersson).
+	- a double fork partially killed the event pipe (great testcase
+          by dormando). affects IO::AIO, BDB and Async::Interrupt.
+        - suck steve's dick and rename our symbols to avoid colliding
+          with nonstandard identifier spam on the broken os x pseudo-os.
+          affects IO::AIO and BDB.
 
 3.6  Mon Jan 11 00:43:39 CET 2010
 	- (libeio) more fixes for the freebsd/apple sendfile - broken by

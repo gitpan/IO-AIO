@@ -139,6 +139,11 @@
 # define NAME_MAX 4096
 #endif
 
+/* used for readlink etc. */
+#ifndef PATH_MAX
+# define PATH_MAX 4096
+#endif
+
 /* buffer size for various temporary buffers */
 #define EIO_BUFSIZE 65536
 
@@ -219,10 +224,10 @@ static volatile unsigned int nready;   /* reqlock */
 static volatile unsigned int npending; /* reqlock */
 static volatile unsigned int max_idle = 4;
 
-static mutex_t wrklock = X_MUTEX_INIT;
-static mutex_t reslock = X_MUTEX_INIT;
-static mutex_t reqlock = X_MUTEX_INIT;
-static cond_t  reqwait = X_COND_INIT;
+static xmutex_t wrklock = X_MUTEX_INIT;
+static xmutex_t reslock = X_MUTEX_INIT;
+static xmutex_t reqlock = X_MUTEX_INIT;
+static xcond_t  reqwait = X_COND_INIT;
 
 #if !HAVE_PREADWRITE
 /*
@@ -230,7 +235,7 @@ static cond_t  reqwait = X_COND_INIT;
  * normal read/write by using a mutex. slows down execution a lot,
  * but that's your problem, not mine.
  */
-static mutex_t preadwritelock = X_MUTEX_INIT;
+static xmutex_t preadwritelock = X_MUTEX_INIT;
 #endif
 
 typedef struct etp_worker
@@ -238,7 +243,7 @@ typedef struct etp_worker
   /* locked by wrklock */
   struct etp_worker *prev, *next;
 
-  thread_t tid;
+  xthread_t tid;
 
   /* locked by reslock, reqlock or wrklock */
   ETP_REQ *req; /* currently processed request */
@@ -1610,8 +1615,8 @@ static void eio_execute (etp_worker *self, eio_req *req)
       case EIO_SYMLINK:   req->result = symlink   (req->ptr1, req->ptr2); break;
       case EIO_MKNOD:     req->result = mknod     (req->ptr1, (mode_t)req->int2, (dev_t)req->int3); break;
 
-      case EIO_READLINK:  ALLOC (NAME_MAX);
-                          req->result = readlink  (req->ptr1, req->ptr2, NAME_MAX); break;
+      case EIO_READLINK:  ALLOC (PATH_MAX);
+                          req->result = readlink  (req->ptr1, req->ptr2, PATH_MAX); break;
 
       case EIO_SYNC:      req->result = 0; sync (); break;
       case EIO_FSYNC:     req->result = fsync     (req->int1); break;
