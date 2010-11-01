@@ -7,7 +7,23 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 TODO: aio_mincore?
-TODO: posix_madvise.
+TODO: add? also linux-specific stuff?
+TODO: O_EXEC O_SEARCH O_CLOEXEC O_DIRECTORY O_DSYNC O_NOCTTY O_NOFOLLOW O_NONBLOCK O_RSYNC O_SYNC O_TTY_INIT O_DIRECT O_LARGEFILE O_NOATIME O_ASYNC
+
+3.7  Mon Nov  1 23:00:34 CET 2010
+        - implement/add madvise, mmap, munmap, aio_mlockall, munlockall,
+          aio_mlock, munlock, msync and mtouch to @EXPORT_OK.
+        - document the sad state of affairs w.r.t. pthread on many bsds.
+	- do not enable mmap on systems without _POSIX_MAPPED_FILES
+          (openbsd 4.8).
+        - do not leak memory in IO::AIO::mmap when the scalar already
+          had string-data.
+	- add O_RDWR, O_APPEND and O_EXCL symbols and semi-document
+          them.
+        - cache the result IV, for a minor speedup in the common case.
+        - croak when an mmapped-scalar changes location, to detect
+          user-errors better.
+        - fix aio_readlink prototype.
 
 3.65 Wed Mar 31 02:45:05 CEST 2010
 	- actually use PATH_MAX instead of NAME_MAX for readlink, as to not

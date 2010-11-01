@@ -6,7 +6,7 @@ IO::AIO - Asynchronous Input/Output
 
  use IO::AIO;
 
- aio_open "/etc/passwd", O_RDONLY, 0, sub {
+ aio_open "/etc/passwd", IO::AIO::O_RDONLY, 0, sub {
     my $fh = shift
        or die "/etc/passwd: $!";
     ...
@@ -78,7 +78,7 @@ F</etc/passwd> asynchronously:
    my $aio_w = EV::io IO::AIO::poll_fileno, EV::READ, \&IO::AIO::poll_cb;
 
    # queue the request to open /etc/passwd
-   aio_open "/etc/passwd", O_RDONLY, 0, sub {
+   aio_open "/etc/passwd", IO::AIO::O_RDONLY, 0, sub {
       my $fh = shift
          or die "error while opening: $!";
 
@@ -170,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.65';
+   our $VERSION = '3.7';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -179,14 +179,16 @@ BEGIN {
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate
-                     aio_msync aio_mtouch aio_statvfs);
+                     aio_msync aio_mtouch aio_mlock aio_mlockall
+                     aio_statvfs);
 
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
                        min_parallel max_parallel max_idle
                        nreqs nready npending nthreads
                        max_poll_time max_poll_reqs
-                       sendfile fadvise);
+                       sendfile fadvise madvise
+                       mmap munmap munlock munlockall);
 
    push @AIO_REQ, qw(aio_busy); # not exported
 
@@ -241,6 +243,8 @@ documentation.
    aio_pathsync $path, $callback->($status)
    aio_msync $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
    aio_mtouch $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
+   aio_mlock $scalar, $offset = 0, $length = undef, $callback->($status)
+   aio_mlockall $flags, $callback->($status)
    aio_group $callback->(...)
    aio_nop $callback->()
 
@@ -263,7 +267,9 @@ documentation.
 
    IO::AIO::sendfile $ofh, $ifh, $offset, $count
    IO::AIO::fadvise $fh, $offset, $len, $advice
-   IO::AIO::mlockall $flags
+   IO::AIO::madvise $scalar, $offset, $length, $advice
+   IO::AIO::mprotect $scalar, $offset, $length, $protect
+   IO::AIO::munlock $scalar, $offset = 0, $length = undef
    IO::AIO::munlockall
 
 =head2 AIO REQUEST FUNCTIONS
@@ -354,7 +360,7 @@ change the umask.
 
 Example:
 
-   aio_open "/etc/passwd", O_RDONLY, 0, sub {
+   aio_open "/etc/passwd", IO::AIO::O_RDONLY, 0, sub {
       if ($_[0]) {
          print "open successful, fh is $_[0]\n";
          ...
@@ -1110,6 +1116,45 @@ C<0> (which reads all pages and ensures they are instantiated) or
 C<IO::AIO::MT_MODIFY>, which modifies the memory page s(by reading and
 writing an octet from it, which dirties the page).
 
+=item aio_mlock $scalar, $offset = 0, $length = undef, $callback->($status)
+
+This is a rather advanced IO::AIO call, which works best on mmap(2)ed
+scalars.
+
+It reads in all the pages of the underlying storage into memory (if any)
+and locks them, so they are not getting swapped/paged out or removed.
+
+If C<$length> is undefined, then the scalar will be locked till the end.
+
+On systems that do not implement C<mlock>, this function returns C<-1>
+and sets errno to C<ENOSYS>.
+
+Note that the corresponding C<munlock> is synchronous and is
+documented under L<MISCELLANEOUS FUNCTIONS>.
+
+Example: open a file, mmap and mlock it - both will be undone when
+C<$data> gets destroyed.
+
+   open my $fh, "<", $path or die "$path: $!";
+   my $data;
+   IO::AIO::mmap $data, -s $fh, IO::AIO::PROT_READ, IO::AIO::MAP_SHARED, $fh;
+   aio_mlock $data; # mlock in background
+
+=item aio_mlockall $flags, $callback->($status)
+
+Calls the C<mlockall> function with the given C<$flags> (a combination of
+C<IO::AIO::MCL_CURRENT> and C<IO::AIO::MCL_FUTURE>).
+
+On systems that do not implement C<mlockall>, this function returns C<-1>
+and sets errno to C<ENOSYS>.
+
+Note that the corresponding C<munlockall> is synchronous and is
+documented under L<MISCELLANEOUS FUNCTIONS>.
+
+Example: asynchronously lock all current and future pages into memory.
+
+   aio_mlockall IO::AIO::MCL_FUTURE;
+
 =item aio_group $callback->(...)
 
 This is a very special aio request: Instead of doing something, it is a
@@ -1539,7 +1584,7 @@ Returns the number of bytes copied, or C<-1> on error.
 
 =item IO::AIO::fadvise $fh, $offset, $len, $advice
 
-Simply calls the C<posix_fadvise> function (see it's
+Simply calls the C<posix_fadvise> function (see its
 manpage for details). The following advice constants are
 avaiable: C<IO::AIO::FADV_NORMAL>, C<IO::AIO::FADV_SEQUENTIAL>,
 C<IO::AIO::FADV_RANDOM>, C<IO::AIO::FADV_NOREUSE>,
@@ -1547,6 +1592,26 @@ C<IO::AIO::FADV_WILLNEED>, C<IO::AIO::FADV_DONTNEED>.
 
 On systems that do not implement C<posix_fadvise>, this function returns
 ENOSYS, otherwise the return value of C<posix_fadvise>.
+
+=item IO::AIO::madvise $scalar, $offset, $len, $advice
+
+Simply calls the C<posix_madvise> function (see its
+manpage for details). The following advice constants are
+avaiable: C<IO::AIO::MADV_NORMAL>, C<IO::AIO::MADV_SEQUENTIAL>,
+C<IO::AIO::MADV_RANDOM>, C<IO::AIO::MADV_WILLNEED>, C<IO::AIO::MADV_DONTNEED>.
+
+On systems that do not implement C<posix_madvise>, this function returns
+ENOSYS, otherwise the return value of C<posix_madvise>.
+
+=item IO::AIO::mprotect $scalar, $offset, $len, $protect
+
+Simply calls the C<mprotect> function on the preferably AIO::mmap'ed
+$scalar (see its manpage for details). The following protect
+constants are avaiable: C<IO::AIO::PROT_NONE>, C<IO::AIO::PROT_READ>,
+C<IO::AIO::PROT_WRITE>, C<IO::AIO::PROT_EXEC>.
+
+On systems that do not implement C<mprotect>, this function returns
+ENOSYS, otherwise the return value of C<mprotect>.
 
 =item IO::AIO::mmap $scalar, $length, $prot, $flags, $fh[, $offset]
 
@@ -1602,13 +1667,10 @@ Example:
 
 Removes a previous mmap and undefines the C<$scalar>.
 
-=item IO::AIO::mlockall $flags
+=item IO::AIO::munlock $scalar, $offset = 0, $length = undef
 
-Calls the C<mlockall> function with the given C<$flags> (a combination of
-C<IO::AIO::MCL_CURRENT> and C<IO::AIO::MCL__FUTURE>).
-
-On systems that do not implement C<mlockall>, this function returns
-ENOSYS, otherwise the return value of C<mlockall>.
+Calls the C<munlock> function, undoing the effects of a previous
+C<aio_mlock> call (see its description for details).
 
 =item IO::AIO::munlockall
 

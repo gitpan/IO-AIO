@@ -142,6 +142,44 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define POSIX_FADV_DONTNEED 0
 #endif
 
+#if _XOPEN_SOURCE < 600 || NO_FADVISE
+# define posix_fadvise(a,b,c,d) errno = ENOSYS /* also return ENOSYS */
+#endif
+
+#ifndef POSIX_MADV_NORMAL
+# define POSIX_MADV_NORMAL 0
+# define NO_MADVISE 1
+#endif
+#ifndef POSIX_MADV_SEQUENTIAL
+# define POSIX_MADV_SEQUENTIAL 0
+#endif
+#ifndef POSIX_MADV_RANDOM
+# define POSIX_MADV_RANDOM 0
+#endif
+#ifndef POSIX_MADV_WILLNEED
+# define POSIX_MADV_WILLNEED 0
+#endif
+#ifndef POSIX_MADV_DONTNEED
+# define POSIX_MADV_DONTNEED 0
+#endif
+
+#if _XOPEN_SOURCE < 600 || NO_MADVISE
+# define posix_madvise(a,b,c) errno = ENOSYS /* also return ENOSYS */
+#endif
+
+#ifndef PROT_NONE
+# define PROT_NONE 0
+#endif
+#ifndef PROT_READ
+# define PROT_READ 0
+#endif
+#ifndef PROT_WRITE
+# define PROT_READ 0
+#endif
+#ifndef PROT_EXEC
+# define PROT_EXEC 0
+#endif
+
 #ifndef ST_NODEV
 # define ST_NODEV       0
 #endif
@@ -171,13 +209,6 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 #endif
 #ifndef ST_RELATIME
 # define ST_RELATIME    0
-#endif
-
-#ifndef MCL_CURRENT
-# define MCL_CURRENT    0
-#endif
-#ifndef MCL_FUTURE
-# define MCL_FUTURE     0
 #endif
 
 #ifndef MAP_ANONYMOUS
@@ -306,17 +337,31 @@ static void req_submit (eio_req *req)
 
 static int req_invoke (eio_req *req)
 {
-  dSP;
-
   if (req->flags & FLAG_SV2_RO_OFF)
     SvREADONLY_off (req->sv2);
 
   if (!EIO_CANCELLED (req) && req->callback)
     {
+      dSP;
+      static SV *sv_result_cache; /* caches the result integer SV */
+      SV *sv_result;
+
       ENTER;
       SAVETMPS;
       PUSHMARK (SP);
       EXTEND (SP, 1);
+
+      /* do not recreate the result IV from scratch each time */
+      if (expect_true (sv_result_cache))
+        {
+          sv_result = sv_result_cache; sv_result_cache = 0;
+          SvIV_set (sv_result, req->result);
+        }
+      else
+        {
+          sv_result = newSViv (req->result);
+          SvREADONLY_on (sv_result);
+        }
 
       switch (req->type)
         {
@@ -471,7 +516,7 @@ static int req_invoke (eio_req *req)
             PL_laststype   = req->type == EIO_LSTAT ? OP_LSTAT : OP_STAT;
             PL_laststatval = req->result;
             PL_statcache   = *(EIO_STRUCT_STAT *)(req->ptr2);
-            PUSHs (sv_2mortal (newSViv (req->result)));
+            PUSHs (sv_result);
             break;
 
           case EIO_READ:
@@ -480,17 +525,17 @@ static int req_invoke (eio_req *req)
               *SvEND (req->sv2) = 0;
               SvPOK_only (req->sv2);
               SvSETMAGIC (req->sv2);
-              PUSHs (sv_2mortal (newSViv (req->result)));
+              PUSHs (sv_result);
             }
             break;
 
-          case EIO_DUP2:
+          case EIO_DUP2: /* EIO_DUP2 actually means aio_close(), su fudge result value */
             if (req->result > 0)
-              req->result = 0;
+              SvIV_set (sv_result, 0);
             /* FALLTHROUGH */
 
           default:
-            PUSHs (sv_2mortal (newSViv (req->result)));
+            PUSHs (sv_result);
             break;
         }
 
@@ -499,6 +544,11 @@ static int req_invoke (eio_req *req)
       PUTBACK;
       call_sv (req->callback, G_VOID | G_EVAL | G_DISCARD);
       SPAGAIN;
+
+      if (expect_false (SvREFCNT (sv_result) != 1 || sv_result_cache))
+        SvREFCNT_dec (sv_result);
+      else
+        sv_result_cache = sv_result;
 
       FREETMPS;
       LEAVE;
@@ -589,6 +639,12 @@ static void atfork_child (void)
 #if !_POSIX_MAPPED_FILES
 # define mmap(addr,length,prot,flags,fd,offs) (errno = ENOSYS, -1)
 # define munmap(addr,length)                  (errno = ENOSYS, -1)
+# define mprotect(addr,len,prot)              (errno = ENOSYS, -1)
+# define PROT_NONE   0
+# define PROT_WRITE  0
+# define MAP_PRIVATE 0
+# define MAP_SHARED  0
+# define MAP_FIXED   0
 #endif
 
 #define MMAP_MAGIC PERL_MAGIC_ext
@@ -603,8 +659,11 @@ mmap_free (pTHX_ SV *sv, MAGIC *mg)
   mg->mg_obj = 0; /* just in case */
 
   SvREADONLY_off (sv);
+
+  if (SvPVX (sv) != mg->mg_ptr)
+    croak ("ERROR: IO::AIO::mmap-mapped scalar changed location, detected");
+
   SvCUR_set (sv, 0);
-  SvLEN_set (sv, 0);
   SvPVX (sv) = 0;
   SvOK_off (sv);
 
@@ -664,8 +723,11 @@ BOOT:
     const_iv (ENOSYS)
     const_iv (O_RDONLY)
     const_iv (O_WRONLY)
+    const_iv (O_RDWR)
     const_iv (O_CREAT)
     const_iv (O_TRUNC)
+    const_iv (O_EXCL)
+    const_iv (O_APPEND)
 #ifndef _WIN32
     const_iv (S_IFIFO)
 #endif
@@ -675,6 +737,12 @@ BOOT:
     const_niv (FADV_NOREUSE   , POSIX_FADV_NOREUSE)
     const_niv (FADV_WILLNEED  , POSIX_FADV_WILLNEED)
     const_niv (FADV_DONTNEED  , POSIX_FADV_DONTNEED)
+
+    const_niv (MADV_NORMAL    , POSIX_MADV_NORMAL)
+    const_niv (MADV_SEQUENTIAL, POSIX_MADV_SEQUENTIAL)
+    const_niv (MADV_RANDOM    , POSIX_MADV_RANDOM)
+    const_niv (MADV_WILLNEED  , POSIX_MADV_WILLNEED)
+    const_niv (MADV_DONTNEED  , POSIX_MADV_DONTNEED)
 
     const_iv (ST_RDONLY)
     const_iv (ST_NOSUID)
@@ -689,8 +757,8 @@ BOOT:
     const_iv (ST_NODIRATIME)
     const_iv (ST_RELATIME)
 
-    const_iv (PROT_EXEC)
     const_iv (PROT_NONE)
+    const_iv (PROT_EXEC)
     const_iv (PROT_READ)
     const_iv (PROT_WRITE)
 
@@ -706,8 +774,8 @@ BOOT:
     const_iv (MAP_POPULATE)
     const_iv (MAP_NONBLOCK)
 
-    const_iv (MCL_FUTURE)
-    const_iv (MCL_CURRENT)
+    const_eio (MCL_FUTURE)
+    const_eio (MCL_CURRENT)
 
     const_eio (MS_ASYNC)
     const_eio (MS_INVALIDATE)
@@ -791,7 +859,6 @@ max_outstanding (int maxreqs)
 
 void
 aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $$$;$
 	PPCODE:
 {
         dREQ;
@@ -807,7 +874,6 @@ aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
 
 void
 aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $;$
         ALIAS:
            aio_fsync     = EIO_FSYNC
            aio_fdatasync = EIO_FDATASYNC
@@ -825,7 +891,6 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
 
 void
 aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $$$$;$
 	PPCODE:
 {
   	int fd = s_fileno_croak (fh, 0);
@@ -843,7 +908,6 @@ aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback
 
 void
 aio_close (SV *fh, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $;$
 	PPCODE:
 {
         static int close_pipe = -1; /* dummy fd to close fds via dup2 */
@@ -875,7 +939,6 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
         ALIAS:
            aio_read  = EIO_READ
            aio_write = EIO_WRITE
-	PROTOTYPE: $$$$$;$
         PPCODE:
 {
         STRLEN svlen;
@@ -926,7 +989,6 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
 
 void
 aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $$;$
         PPCODE:
 {
 	SV *data;
@@ -941,7 +1003,6 @@ aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
 
 void
 aio_sendfile (SV *out_fh, SV *in_fh, off_t in_offset, size_t length, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $$$$;$
         PPCODE:
 {
   	int ifd = s_fileno_croak (in_fh , 0);
@@ -961,7 +1022,6 @@ aio_sendfile (SV *out_fh, SV *in_fh, off_t in_offset, size_t length, SV *callbac
 
 void
 aio_readahead (SV *fh, off_t offset, size_t length, SV *callback=&PL_sv_undef)
-	PROTOTYPE: $$$;$
         PPCODE:
 {
   	int fd = s_fileno_croak (fh, 0);
@@ -1172,12 +1232,11 @@ aio_mtouch (SV8 *data, IV offset = 0, SV *length = &PL_sv_undef, int flags = 0, 
         ALIAS:
            aio_mtouch = EIO_MTOUCH
            aio_msync  = EIO_MSYNC
-	PROTOTYPE: $$$$;$
         PPCODE:
 {
         STRLEN svlen;
-        UV len = SvUV (length);
         char *svptr = SvPVbyte (data, svlen);
+        UV len = SvUV (length);
 
         if (offset < 0)
           offset += svlen;
@@ -1192,13 +1251,54 @@ aio_mtouch (SV8 *data, IV offset = 0, SV *length = &PL_sv_undef, int flags = 0, 
           dREQ;
 
           req->type = ix;
-          req->size = len;
           req->sv2  = SvREFCNT_inc (data);
           req->ptr2 = (char *)svptr + offset;
+          req->size = len;
           req->int1 = flags;
 
           REQ_SEND;
         }
+}
+
+void
+aio_mlock (SV8 *data, IV offset = 0, SV *length = &PL_sv_undef, SV *callback=&PL_sv_undef)
+        PPCODE:
+{
+        STRLEN svlen;
+        char *svptr = SvPVbyte (data, svlen);
+        UV len = SvUV (length);
+
+        if (offset < 0)
+          offset += svlen;
+
+        if (offset < 0 || offset > svlen)
+          croak ("offset outside of scalar");
+
+        if (!SvOK (length) || len + offset > svlen)
+          len = svlen - offset;
+
+        {
+          dREQ;
+
+          req->type = EIO_MLOCK;
+          req->sv2  = SvREFCNT_inc (data);
+          req->ptr2 = (char *)svptr + offset;
+          req->size = len;
+
+          REQ_SEND;
+        }
+}
+
+void
+aio_mlockall (IV flags, SV *callback=&PL_sv_undef)
+        PPCODE:
+{
+        dREQ;
+
+        req->type = EIO_MLOCKALL;
+        req->int1 = flags;
+
+        REQ_SEND;
 }
 
 void
@@ -1215,7 +1315,6 @@ aio_busy (double delay, SV *callback=&PL_sv_undef)
 
 void
 aio_group (SV *callback=&PL_sv_undef)
-	PROTOTYPE: ;$
         PPCODE:
 {
 	dREQ;
@@ -1242,7 +1341,6 @@ aio_nop (SV *callback=&PL_sv_undef)
 
 int
 aioreq_pri (int pri = 0)
-	PROTOTYPE: ;$
 	CODE:
 	RETVAL = next_pri;
 	if (items > 0)
@@ -1264,7 +1362,6 @@ aioreq_nice (int nice = 0)
 
 void
 flush ()
-	PROTOTYPE:
 	CODE:
         while (eio_nreqs ())
           {
@@ -1273,8 +1370,7 @@ flush ()
           }
 
 int
-poll()
-	PROTOTYPE:
+poll ()
 	CODE:
         poll_wait ();
         RETVAL = poll_cb ();
@@ -1282,15 +1378,14 @@ poll()
 	RETVAL
 
 int
-poll_fileno()
-	PROTOTYPE:
+poll_fileno ()
 	CODE:
         RETVAL = s_epipe_fd (&respipe);
 	OUTPUT:
 	RETVAL
 
 int
-poll_cb(...)
+poll_cb (...)
 	PROTOTYPE:
 	CODE:
         RETVAL = poll_cb ();
@@ -1298,38 +1393,33 @@ poll_cb(...)
 	RETVAL
 
 void
-poll_wait()
-	PROTOTYPE:
+poll_wait ()
 	CODE:
         poll_wait ();
 
 int
-nreqs()
-	PROTOTYPE:
+nreqs ()
 	CODE:
         RETVAL = eio_nreqs ();
 	OUTPUT:
 	RETVAL
 
 int
-nready()
-	PROTOTYPE:
+nready ()
 	CODE:
         RETVAL = eio_nready ();
 	OUTPUT:
 	RETVAL
 
 int
-npending()
-	PROTOTYPE:
+npending ()
 	CODE:
         RETVAL = eio_npending ();
 	OUTPUT:
 	RETVAL
 
 int
-nthreads()
-	PROTOTYPE:
+nthreads ()
 	CODE:
         RETVAL = eio_nthreads ();
 	OUTPUT:
@@ -1337,19 +1427,13 @@ nthreads()
 
 int
 fadvise (aio_rfd fh, off_t offset, off_t length, IV advice)
-        PROTOTYPE: $$$$
         CODE:
-#if _XOPEN_SOURCE >= 600 && !NO_FADVISE
         RETVAL = posix_fadvise (fh, offset, length, advice);
-#else
-        RETVAL = errno = ENOSYS; /* yes, this is actually correct */
-#endif
 	OUTPUT:
         RETVAL
 
 ssize_t
 sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
-        PROTOTYPE: $$$$
         CODE:
         RETVAL = eio_sendfile_sync (ofh, ifh, offset, count);
 	OUTPUT:
@@ -1357,7 +1441,6 @@ sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
 
 void
 mmap (SV *scalar, size_t length, int prot, int flags, SV *fh, off_t offset = 0)
-	PROTOTYPE: $$$$$;$
 	PPCODE:
         sv_unmagic (scalar, MMAP_MAGIC);
 {
@@ -1366,13 +1449,19 @@ mmap (SV *scalar, size_t length, int prot, int flags, SV *fh, off_t offset = 0)
 	if (addr == (void *)-1)
 	  XSRETURN_NO;
 
+        sv_force_normal (scalar);
+
         /* we store the length in mg_obj, as namlen is I32 :/ */
         sv_magicext (scalar, 0, MMAP_MAGIC, &mmap_vtbl, (char *)addr, 0)
           ->mg_obj = (SV *)length;
 
 	SvUPGRADE (scalar, SVt_PV); /* nop... */
+
 	if (!(prot & PROT_WRITE))
 	  SvREADONLY_on (scalar);
+
+        if (SvLEN (scalar))
+          Safefree (SvPVX (scalar));
 
 	SvPVX (scalar) = (char *)addr;
 	SvCUR_set (scalar, length);
@@ -1384,30 +1473,70 @@ mmap (SV *scalar, size_t length, int prot, int flags, SV *fh, off_t offset = 0)
 
 void
 munmap (SV *scalar)
-	PROTOTYPE: $
 	CODE:
         sv_unmagic (scalar, MMAP_MAGIC);
 
 int
-mlockall (int flags)
-	PROTOTYPE: $
+madvise (SV *scalar, off_t offset = 0, SV *length = &PL_sv_undef, IV advice_or_prot)
+	ALIAS:
+        mprotect = 1
         CODE:
+{
+	STRLEN svlen;
+  	void *addr = SvPVbyte (scalar, svlen);
+        size_t len = SvUV (length);
+
+        if (offset < 0)
+          offset += svlen;
+
+        if (offset < 0 || offset > svlen)
+          croak ("offset outside of scalar");
+
+        if (!SvOK (length) || len + offset > svlen)
+          len = svlen - offset;
+
+        addr = (void *)(((intptr_t)addr) + offset);
+        eio_page_align (&addr, &len);
+
+        switch (ix)
+          {
+            case 0: RETVAL = posix_madvise (addr, len, advice_or_prot); break;
+            case 1: RETVAL = mprotect      (addr, len, advice_or_prot); break;
+          }
+}
+	OUTPUT:
+        RETVAL
+
+int
+munlock (SV *scalar, off_t offset = 0, SV *length = &PL_sv_undef)
+        CODE:
+{
+	STRLEN svlen;
+  	void *addr = SvPVbyte (scalar, svlen);
+        size_t len = SvUV (length);
+
+        if (offset < 0)
+          offset += svlen;
+
+        if (offset < 0 || offset > svlen)
+          croak ("offset outside of scalar");
+
+        if (!SvOK (length) || len + offset > svlen)
+          len = svlen - offset;
+
+        addr = (void *)(((intptr_t)addr) + offset);
+        eio_page_align (&addr, &len);
 #if _POSIX_MEMLOCK
-#if __GLIBC__ == 2 && __GLIBC_MINOR__ <= 7
-        extern int mallopt (int, int);
-        mallopt (-6, 238); /* http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=473812 */
-#endif
-        mlockall (flags);
+        RETVAL = munlock (addr, len);
 #else
-        RETVAL = -1;
-        errno = ENOSYS;
+        RETVAL = ((errno = ENOSYS), -1);
 #endif
+}
         OUTPUT:
         RETVAL
 
 int
 munlockall ()
-	PROTOTYPE:
         CODE:
 #if _POSIX_MEMLOCK
         munlockall ();

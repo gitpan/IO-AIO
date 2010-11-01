@@ -19,17 +19,14 @@ if ($^O =~ /win32/i or $^O =~ /mswin/) {
    $INC  = "";
    $LIBS = ['-lpthread', '-lpthreads', '-lpthreadVC2', ''];
 
-   if ($^O =~ /freebsd/i) {
+   if ($^O =~ /bsd/i) {
       print <<EOF;
 
-This package seems to deadlock or otherwise misbehave under FreeBSD. As
-documentation on FreeBSD threading is sorely lacking and confusing, I'll
-just call FreeBSD broken with regards to threading.
-
-If you find out whats wrong, please tell me.
-
-Some people had luck with using OPTIMIZE=-O instead of -O2, so you might
-want to try that.
+If you have problems with deadlocks or crashes on your system,
+make sure your perl has been linked with -lpthread (you might try
+LD_PRELOAD=/path/to/libpthread.so as a workaround). Also, pthread support
+under many BSDs is not the best - before reporting a bug in this module,
+make sure it's not an OS bug.
 
 EOF
    }
