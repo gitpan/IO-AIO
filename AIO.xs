@@ -120,11 +120,11 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 
 #define EIO_NO_WRAPPERS 1
 
+#include "libeio/config.h"
 #include "libeio/eio.h"
 
 #ifndef POSIX_FADV_NORMAL
 # define POSIX_FADV_NORMAL 0
-# define NO_FADVISE 1
 #endif
 #ifndef POSIX_FADV_SEQUENTIAL
 # define POSIX_FADV_SEQUENTIAL 0
@@ -142,13 +142,12 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define POSIX_FADV_DONTNEED 0
 #endif
 
-#if _XOPEN_SOURCE < 600 || NO_FADVISE
+#if !HAVE_POSIX_FADVISE
 # define posix_fadvise(a,b,c,d) errno = ENOSYS /* also return ENOSYS */
 #endif
 
 #ifndef POSIX_MADV_NORMAL
 # define POSIX_MADV_NORMAL 0
-# define NO_MADVISE 1
 #endif
 #ifndef POSIX_MADV_SEQUENTIAL
 # define POSIX_MADV_SEQUENTIAL 0
@@ -163,7 +162,7 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define POSIX_MADV_DONTNEED 0
 #endif
 
-#if _XOPEN_SOURCE < 600 || NO_MADVISE
+#if !HAVE_POSIX_MADVISE
 # define posix_madvise(a,b,c) errno = ENOSYS /* also return ENOSYS */
 #endif
 
@@ -356,6 +355,7 @@ static int req_invoke (eio_req *req)
         {
           sv_result = sv_result_cache; sv_result_cache = 0;
           SvIV_set (sv_result, req->result);
+          SvIOK_only (sv_result);
         }
       else
         {
@@ -529,7 +529,7 @@ static int req_invoke (eio_req *req)
             }
             break;
 
-          case EIO_DUP2: /* EIO_DUP2 actually means aio_close(), su fudge result value */
+          case EIO_DUP2: /* EIO_DUP2 actually means aio_close(), so fudge result value */
             if (req->result > 0)
               SvIV_set (sv_result, 0);
             /* FALLTHROUGH */

@@ -361,6 +361,23 @@ FUNCTIONS
         more than one "aio_sendfile" per $out_fh, as they will interfere
         with each other.
 
+        Please note that "aio_sendfile" can read more bytes from $in_fh than
+        are written, and there is no way to find out how many bytes have
+        been read from "aio_sendfile" alone, as "aio_sendfile" only provides
+        the number of bytes written to $out_fh. Only if the result value
+        equals $length one can assume that $length bytes have been read.
+
+        Unlike with other "aio_" functions, it makes a lot of sense to use
+        "aio_sendfile" on non-blocking sockets, as long as one end
+        (typically the $in_fh) is a file - the file I/O will then be
+        asynchronous, while the socket I/O will be non-blocking. Note,
+        however, that you can run into a trap where "aio_sendfile" reads
+        some data with readahead, then fails to write all data, and when the
+        socket is ready the next time, the data in the cache is already
+        lost, forcing "aio_sendfile" to again hit the disk. Explicit
+        "aio_read" + "aio_write" let's you control resource usage much
+        better.
+
         This call tries to make use of a native "sendfile" syscall to
         provide zero-copy operation. For this to work, $out_fh should refer
         to a socket, and $in_fh should refer to an mmap'able file.
@@ -369,13 +386,6 @@ FUNCTIONS
         "ENOTSUP", "EOPNOTSUPP", "EAFNOSUPPORT", "EPROTOTYPE" or "ENOTSOCK",
         it will be emulated, so you can call "aio_sendfile" on any type of
         filehandle regardless of the limitations of the operating system.
-
-        Please note, however, that "aio_sendfile" can read more bytes from
-        $in_fh than are written, and there is no way to find out how many
-        bytes have been read from "aio_sendfile" alone, as "aio_sendfile"
-        only provides the number of bytes written to $out_fh. Only if the
-        result value equals $length one can assume that $length bytes have
-        been read.
 
     aio_readahead $fh,$offset,$length, $callback->($retval)
         "aio_readahead" populates the page cache with data from a file so

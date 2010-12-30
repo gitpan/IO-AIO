@@ -170,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.7';
+   our $VERSION = '3.71';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -430,6 +430,22 @@ file offset of C<$out_fh>. Because of that, it is not safe to issue more
 than one C<aio_sendfile> per C<$out_fh>, as they will interfere with each
 other.
 
+Please note that C<aio_sendfile> can read more bytes from C<$in_fh> than
+are written, and there is no way to find out how many bytes have been read
+from C<aio_sendfile> alone, as C<aio_sendfile> only provides the number of
+bytes written to C<$out_fh>. Only if the result value equals C<$length>
+one can assume that C<$length> bytes have been read.
+
+Unlike with other C<aio_> functions, it makes a lot of sense to use
+C<aio_sendfile> on non-blocking sockets, as long as one end (typically
+the C<$in_fh>) is a file - the file I/O will then be asynchronous, while
+the socket I/O will be non-blocking. Note, however, that you can run into
+a trap where C<aio_sendfile> reads some data with readahead, then fails
+to write all data, and when the socket is ready the next time, the data
+in the cache is already lost, forcing C<aio_sendfile> to again hit the
+disk. Explicit C<aio_read> + C<aio_write> let's you control resource usage
+much better.
+
 This call tries to make use of a native C<sendfile> syscall to provide
 zero-copy operation. For this to work, C<$out_fh> should refer to a
 socket, and C<$in_fh> should refer to an mmap'able file.
@@ -438,13 +454,6 @@ If a native sendfile cannot be found or it fails with C<ENOSYS>,
 C<ENOTSUP>, C<EOPNOTSUPP>, C<EAFNOSUPPORT>, C<EPROTOTYPE> or C<ENOTSOCK>,
 it will be emulated, so you can call C<aio_sendfile> on any type of
 filehandle regardless of the limitations of the operating system.
-
-Please note, however, that C<aio_sendfile> can read more bytes from
-C<$in_fh> than are written, and there is no way to find out how many
-bytes have been read from C<aio_sendfile> alone, as C<aio_sendfile> only
-provides the number of bytes written to C<$out_fh>. Only if the result
-value equals C<$length> one can assume that C<$length> bytes have been
-read.
 
 
 =item aio_readahead $fh,$offset,$length, $callback->($retval)

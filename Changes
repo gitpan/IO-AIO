@@ -10,6 +10,13 @@ TODO: aio_mincore?
 TODO: add? also linux-specific stuff?
 TODO: O_EXEC O_SEARCH O_CLOEXEC O_DIRECTORY O_DSYNC O_NOCTTY O_NOFOLLOW O_NONBLOCK O_RSYNC O_SYNC O_TTY_INIT O_DIRECT O_LARGEFILE O_NOATIME O_ASYNC
 
+3.71 Thu Dec 30 08:18:46 CET 2010
+	- the numerical result value passed to callbacks did not stringify
+          correctly, due to internal reuse and failure to reset the sv flags.
+	- actually test for posix_[mf]advise, as at least uClibc defines
+          _POSIX_ADVISORY_INFO without actually having any of the required
+          funcitonality. ugh.
+
 3.7  Mon Nov  1 23:00:34 CET 2010
         - implement/add madvise, mmap, munmap, aio_mlockall, munlockall,
           aio_mlock, munlock, msync and mtouch to @EXPORT_OK.
