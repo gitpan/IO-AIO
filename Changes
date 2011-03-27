@@ -10,6 +10,17 @@ TODO: aio_mincore?
 TODO: add? also linux-specific stuff?
 TODO: O_EXEC O_SEARCH O_CLOEXEC O_DIRECTORY O_DSYNC O_NOCTTY O_NOFOLLOW O_NONBLOCK O_RSYNC O_SYNC O_TTY_INIT O_DIRECT O_LARGEFILE O_NOATIME O_ASYNC
 
+3.8  Sun Mar 27 12:25:33 CEST 2011
+	- use nonstandard but maybe-working-on-bsd fork technique.
+	- support a max_idle value of 0.
+	- support setting of idle timeout value (IO::AIO::idle_timeout).
+
+3.72 Fri Feb 11 04:25:38 CET 2011
+	- use _POSIX_MEMLOCK_RANGE to detetc mlock/munlock.
+        - aio_mknod always used a dev_t value of 0.
+        - new treescan option: --grep.
+        - add more S_IF macros, and major/minor/makedev "macros".
+
 3.71 Thu Dec 30 08:18:46 CET 2010
 	- the numerical result value passed to callbacks did not stringify
           correctly, due to internal reuse and failure to reset the sv flags.

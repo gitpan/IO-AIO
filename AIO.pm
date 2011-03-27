@@ -170,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.71';
+   our $VERSION = '3.8';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -184,7 +184,7 @@ BEGIN {
 
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
-                       min_parallel max_parallel max_idle
+                       min_parallel max_parallel max_idle idle_timeout
                        nreqs nready npending nthreads
                        max_poll_time max_poll_reqs
                        sendfile fadvise madvise
@@ -260,6 +260,7 @@ documentation.
    IO::AIO::min_parallel $nthreads
    IO::AIO::max_parallel $nthreads
    IO::AIO::max_idle $nthreads
+   IO::AIO::idle_timeout $seconds
    IO::AIO::max_outstanding $maxreqs
    IO::AIO::nreqs
    IO::AIO::nready
@@ -486,6 +487,15 @@ Currently, the stats are always 64-bit-stats, i.e. instead of returning an
 error when stat'ing a large file, the results will be silently truncated
 unless perl itself is compiled with large file support.
 
+To help interpret the mode and dev/rdev stat values, IO::AIO offers the
+following constants and functions (if not implemented, the constants will
+be C<0> and the functions will either C<croak> or fall back on traditional
+behaviour).
+
+C<S_IFMT>, C<S_IFIFO>, C<S_IFCHR>, C<S_IFBLK>, C<S_IFLNK>, C<S_IFREG>,
+C<S_IFDIR>, C<S_IFWHT>, C<S_IFSOCK>, C<IO::AIO::major $dev_t>,
+C<IO::AIO::minor $dev_t>, C<IO::AIO::makedev $major, $minor>.
+
 Example: Print the length of F</etc/passwd>:
 
    aio_stat "/etc/passwd", sub {
@@ -596,6 +606,8 @@ The only (POSIX-) portable way of calling this function is:
 
    aio_mknod $path, IO::AIO::S_IFIFO | $mode, 0, sub { ...
 
+See C<aio_stat> for info about some potentially helpful extra constants
+and functions.
 
 =item aio_link $srcpath, $dstpath, $callback->($status)
 
@@ -1516,10 +1528,11 @@ Under normal circumstances you don't need to call this function.
 
 =item IO::AIO::max_idle $nthreads
 
-Limit the number of threads (default: 4) that are allowed to idle (i.e.,
-threads that did not get a request to process within 10 seconds). That
-means if a thread becomes idle while C<$nthreads> other threads are also
-idle, it will free its resources and exit.
+Limit the number of threads (default: 4) that are allowed to idle
+(i.e., threads that did not get a request to process within the idle
+timeout (default: 10 seconds). That means if a thread becomes idle while
+C<$nthreads> other threads are also idle, it will free its resources and
+exit.
 
 This is useful when you allow a large number of threads (e.g. 100 or 1000)
 to allow for extremely high load situations, but want to free resources
@@ -1528,6 +1541,11 @@ under normal circumstances (1000 threads can easily consume 30MB of RAM).
 The default is probably ok in most situations, especially if thread
 creation is fast. If thread creation is very slow on your system you might
 want to use larger values.
+
+=item IO::AIO::idle_timeout $seconds
+
+Sets the minimum idle timeout (default 10) after which worker threads are
+allowed to exit. SEe C<IO::AIO::max_idle>.
 
 =item IO::AIO::max_outstanding $maxreqs
 

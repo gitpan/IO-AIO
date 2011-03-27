@@ -1,7 +1,7 @@
 /*
  * libeio implementation
  *
- * Copyright (c) 2007,2008,2009,2010 Marc Alexander Lehmann <libeio@schmorp.de>
+ * Copyright (c) 2007,2008,2009,2010,2011 Marc Alexander Lehmann <libeio@schmorp.de>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modifica-
@@ -81,7 +81,7 @@
 # include <signal.h>
 # include <dirent.h>
 
-#if _POSIX_MEMLOCK || _POSIX_MAPPED_FILES
+#if _POSIX_MEMLOCK || _POSIX_MEMLOCK_RANGE || _POSIX_MAPPED_FILES
 # include <sys/mman.h>
 #endif
 
@@ -133,9 +133,6 @@
 #ifndef D_NAMLEN
 # define D_NAMLEN(de) strlen ((de)->d_name)
 #endif
-
-/* number of seconds after which an idle threads exit */
-#define IDLE_TIMEOUT 10
 
 /* used for struct dirent, AIX doesn't provide it */
 #ifndef NAME_MAX
@@ -225,12 +222,13 @@ static unsigned int max_poll_reqs;     /* reslock */
 static volatile unsigned int nreqs;    /* reqlock */
 static volatile unsigned int nready;   /* reqlock */
 static volatile unsigned int npending; /* reqlock */
-static volatile unsigned int max_idle = 4;
+static volatile unsigned int max_idle = 4;      /* maximum number of threads that can idle indefinitely */
+static volatile unsigned int idle_timeout = 10; /* number of seconds after which an idle threads exit */
 
-static xmutex_t wrklock = X_MUTEX_INIT;
-static xmutex_t reslock = X_MUTEX_INIT;
-static xmutex_t reqlock = X_MUTEX_INIT;
-static xcond_t  reqwait = X_COND_INIT;
+static xmutex_t wrklock;
+static xmutex_t reslock;
+static xmutex_t reqlock;
+static xcond_t  reqwait;
 
 #if !HAVE_PREADWRITE
 /*
@@ -370,6 +368,14 @@ static ETP_REQ *reqq_shift (etp_reqq *q)
   abort ();
 }
 
+static void etp_thread_init (void)
+{
+  X_MUTEX_CREATE (wrklock);
+  X_MUTEX_CREATE (reslock);
+  X_MUTEX_CREATE (reqlock);
+  X_COND_CREATE  (reqwait);
+}
+
 static void etp_atfork_prepare (void)
 {
   X_LOCK (wrklock);
@@ -417,12 +423,13 @@ static void etp_atfork_child (void)
   nready   = 0;
   npending = 0;
 
-  etp_atfork_parent ();
+  etp_thread_init ();
 }
 
 static void
 etp_once_init (void)
-{    
+{
+  etp_thread_init ();
   X_THREAD_ATFORK (etp_atfork_prepare, etp_atfork_parent, etp_atfork_child);
 }
 
@@ -623,7 +630,14 @@ static void etp_set_max_poll_reqs (unsigned int maxreqs)
 static void etp_set_max_idle (unsigned int nthreads)
 {
   if (WORDACCESS_UNSAFE) X_LOCK   (reqlock);
-  max_idle = nthreads <= 0 ? 1 : nthreads;
+  max_idle = nthreads;
+  if (WORDACCESS_UNSAFE) X_UNLOCK (reqlock);
+}
+
+static void etp_set_idle_timeout (unsigned int seconds)
+{
+  if (WORDACCESS_UNSAFE) X_LOCK   (reqlock);
+  idle_timeout = seconds;
   if (WORDACCESS_UNSAFE) X_UNLOCK (reqlock);
 }
 
@@ -759,6 +773,11 @@ void eio_set_max_poll_reqs (unsigned int maxreqs)
 void eio_set_max_idle (unsigned int nthreads)
 {
   etp_set_max_idle (nthreads);
+}
+
+void eio_set_idle_timeout (unsigned int seconds)
+{
+  etp_set_idle_timeout (seconds);
 }
 
 void eio_set_min_parallel (unsigned int nthreads)
@@ -1433,17 +1452,8 @@ eio_page_align (void **addr, size_t *length)
 }
 
 #if !_POSIX_MEMLOCK
-# define eio__mlock(a,b) ((errno = ENOSYS), -1)
 # define eio__mlockall(a) ((errno = ENOSYS), -1)
 #else
-
-static int
-eio__mlock (void *addr, size_t length)
-{
-  eio_page_align (&addr, &length);
-
-  return mlock (addr, length);
-}
 
 static int
 eio__mlockall (int flags)
@@ -1463,6 +1473,20 @@ eio__mlockall (int flags)
 
   return mlockall (flags);
 }
+#endif
+
+#if !_POSIX_MEMLOCK_RANGE
+# define eio__mlock(a,b) ((errno = ENOSYS), -1)
+#else
+
+static int
+eio__mlock (void *addr, size_t length)
+{
+  eio_page_align (&addr, &length);
+
+  return mlock (addr, length);
+}
+
 #endif
 
 #if !(_POSIX_MAPPED_FILES && _POSIX_SYNCHRONIZED_IO)
@@ -1548,7 +1572,7 @@ X_THREAD_PROC (etp_proc)
 
           ++idle;
 
-          ts.tv_sec = time (0) + IDLE_TIMEOUT;
+          ts.tv_sec = time (0) + idle_timeout;
           if (X_COND_TIMEDWAIT (reqwait, reqlock, ts) == ETIMEDOUT)
             {
               if (idle > max_idle)
@@ -1678,7 +1702,7 @@ static void eio_execute (etp_worker *self, eio_req *req)
       case EIO_RENAME:    req->result = rename    (req->ptr1, req->ptr2); break;
       case EIO_LINK:      req->result = link      (req->ptr1, req->ptr2); break;
       case EIO_SYMLINK:   req->result = symlink   (req->ptr1, req->ptr2); break;
-      case EIO_MKNOD:     req->result = mknod     (req->ptr1, (mode_t)req->int2, (dev_t)req->int3); break;
+      case EIO_MKNOD:     req->result = mknod     (req->ptr1, (mode_t)req->int2, (dev_t)req->offs); break;
 
       case EIO_READLINK:  ALLOC (PATH_MAX);
                           req->result = readlink  (req->ptr1, req->ptr2, PATH_MAX); break;
@@ -1938,7 +1962,7 @@ eio_req *eio_readdir (const char *path, int flags, int pri, eio_cb cb, void *dat
 
 eio_req *eio_mknod (const char *path, mode_t mode, dev_t dev, int pri, eio_cb cb, void *data)
 {
-  REQ (EIO_MKNOD); PATH; req->int2 = (long)mode; req->int3 = (long)dev; SEND;
+  REQ (EIO_MKNOD); PATH; req->int2 = (long)mode; req->offs = (off_t)dev; SEND;
 }
 
 static eio_req *

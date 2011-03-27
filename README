@@ -206,6 +206,7 @@ FUNCTIONS
        IO::AIO::min_parallel $nthreads
        IO::AIO::max_parallel $nthreads
        IO::AIO::max_idle $nthreads
+       IO::AIO::idle_timeout $seconds
        IO::AIO::max_outstanding $maxreqs
        IO::AIO::nreqs
        IO::AIO::nready
@@ -416,6 +417,15 @@ FUNCTIONS
         silently truncated unless perl itself is compiled with large file
         support.
 
+        To help interpret the mode and dev/rdev stat values, IO::AIO offers
+        the following constants and functions (if not implemented, the
+        constants will be 0 and the functions will either "croak" or fall
+        back on traditional behaviour).
+
+        "S_IFMT", "S_IFIFO", "S_IFCHR", "S_IFBLK", "S_IFLNK", "S_IFREG",
+        "S_IFDIR", "S_IFWHT", "S_IFSOCK", "IO::AIO::major $dev_t",
+        "IO::AIO::minor $dev_t", "IO::AIO::makedev $major, $minor".
+
         Example: Print the length of /etc/passwd:
 
            aio_stat "/etc/passwd", sub {
@@ -512,6 +522,9 @@ FUNCTIONS
         The only (POSIX-) portable way of calling this function is:
 
            aio_mknod $path, IO::AIO::S_IFIFO | $mode, 0, sub { ...
+
+        See "aio_stat" for info about some potentially helpful extra
+        constants and functions.
 
     aio_link $srcpath, $dstpath, $callback->($status)
         Asynchronously create a new link to the existing object at $srcpath
@@ -1123,9 +1136,10 @@ FUNCTIONS
 
     IO::AIO::max_idle $nthreads
         Limit the number of threads (default: 4) that are allowed to idle
-        (i.e., threads that did not get a request to process within 10
-        seconds). That means if a thread becomes idle while $nthreads other
-        threads are also idle, it will free its resources and exit.
+        (i.e., threads that did not get a request to process within the idle
+        timeout (default: 10 seconds). That means if a thread becomes idle
+        while $nthreads other threads are also idle, it will free its
+        resources and exit.
 
         This is useful when you allow a large number of threads (e.g. 100 or
         1000) to allow for extremely high load situations, but want to free
@@ -1135,6 +1149,10 @@ FUNCTIONS
         The default is probably ok in most situations, especially if thread
         creation is fast. If thread creation is very slow on your system you
         might want to use larger values.
+
+    IO::AIO::idle_timeout $seconds
+        Sets the minimum idle timeout (default 10) after which worker
+        threads are allowed to exit. SEe "IO::AIO::max_idle".
 
     IO::AIO::max_outstanding $maxreqs
         This is a very bad function to use in interactive programs because

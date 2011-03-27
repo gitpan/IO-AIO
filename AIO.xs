@@ -18,7 +18,7 @@
 #include <fcntl.h>
 #include <sched.h>
 
-#if _POSIX_MEMLOCK || _POSIX_MAPPED_FILES
+#if _POSIX_MEMLOCK || _POSIX_MEMLOCK_RANGE || _POSIX_MAPPED_FILES
 # include <sys/mman.h>
 #endif
 
@@ -210,6 +210,31 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define ST_RELATIME    0
 #endif
 
+#ifndef S_IFIFO
+# define S_IFIFO	0
+#endif
+#ifndef S_IFCHR
+# define S_IFCHR	0
+#endif
+#ifndef S_IFBLK
+# define S_IFBLK	0
+#endif
+#ifndef S_IFLNK
+# define S_IFLNK	0
+#endif
+#ifndef S_IFREG
+# define S_IFREG	0
+#endif
+#ifndef S_IFDIR
+# define S_IFDIR	0
+#endif
+#ifndef S_IFWHT
+# define S_IFWHT	0
+#endif
+#ifndef S_IFSOCK
+# define S_IFSOCK	0
+#endif
+
 #ifndef MAP_ANONYMOUS
 # ifdef MAP_ANON
 #  define MAP_ANONYMOUS MAP_ANON
@@ -231,6 +256,16 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 #endif
 #ifndef MAP_NONBLOCK
 # define MAP_NONBLOCK   0
+#endif
+
+#ifndef makedev
+# define makedev(maj,min) (((maj) << 8) | (min))
+#endif
+#ifndef major
+# define major(dev) ((dev) >> 8)
+#endif
+#ifndef minor
+# define minor(dev) ((dev) & 0xff)
 #endif
 
 #ifndef PAGESIZE
@@ -639,6 +674,9 @@ static void atfork_child (void)
 #if !_POSIX_MAPPED_FILES
 # define mmap(addr,length,prot,flags,fd,offs) (errno = ENOSYS, -1)
 # define munmap(addr,length)                  (errno = ENOSYS, -1)
+#endif
+
+#if !_POSIX_MEMORY_PROTECTION
 # define mprotect(addr,len,prot)              (errno = ENOSYS, -1)
 # define PROT_NONE   0
 # define PROT_WRITE  0
@@ -728,9 +766,17 @@ BOOT:
     const_iv (O_TRUNC)
     const_iv (O_EXCL)
     const_iv (O_APPEND)
-#ifndef _WIN32
+
     const_iv (S_IFIFO)
-#endif
+    const_iv (S_IFCHR)
+    const_iv (S_IFBLK)
+    const_iv (S_IFLNK)
+    const_iv (S_IFREG)
+    const_iv (S_IFDIR)
+    const_iv (S_IFWHT)
+    const_iv (S_IFSOCK)
+    const_iv (S_IFMT)
+
     const_niv (FADV_NORMAL    , POSIX_FADV_NORMAL)
     const_niv (FADV_SEQUENTIAL, POSIX_FADV_SEQUENTIAL)
     const_niv (FADV_RANDOM    , POSIX_FADV_RANDOM)
@@ -822,7 +868,7 @@ BOOT:
 }
 
 void
-max_poll_reqs (int nreqs)
+max_poll_reqs (unsigned int nreqs)
 	PROTOTYPE: $
         CODE:
         eio_set_max_poll_reqs (nreqs);
@@ -834,25 +880,31 @@ max_poll_time (double nseconds)
         eio_set_max_poll_time (nseconds);
 
 void
-min_parallel (int nthreads)
+min_parallel (unsigned int nthreads)
 	PROTOTYPE: $
         CODE:
         eio_set_min_parallel (nthreads);
 
 void
-max_parallel (int nthreads)
+max_parallel (unsigned int nthreads)
 	PROTOTYPE: $
         CODE:
         eio_set_max_parallel (nthreads);
 
 void
-max_idle (int nthreads)
+max_idle (unsigned int nthreads)
 	PROTOTYPE: $
         CODE:
         eio_set_max_idle (nthreads);
 
 void
-max_outstanding (int maxreqs)
+idle_timeout (unsigned int seconds)
+	PROTOTYPE: $
+        CODE:
+        eio_set_idle_timeout (seconds);
+
+void
+max_outstanding (unsigned int maxreqs)
 	PROTOTYPE: $
         CODE:
         max_outstanding = maxreqs;
@@ -1061,6 +1113,22 @@ aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
 
         REQ_SEND;
 }
+
+UV
+major (UV dev)
+	ALIAS:
+        minor = 1
+	CODE:
+        RETVAL = ix ? major (dev) : minor (dev);
+	OUTPUT:
+        RETVAL
+
+UV
+makedev (UV maj, UV min)
+	CODE:
+        RETVAL = makedev (maj, min);
+	OUTPUT:
+        RETVAL
 
 void
 aio_utime (SV8 *fh_or_path, SV *atime, SV *mtime, SV *callback=&PL_sv_undef)
@@ -1526,7 +1594,7 @@ munlock (SV *scalar, off_t offset = 0, SV *length = &PL_sv_undef)
 
         addr = (void *)(((intptr_t)addr) + offset);
         eio_page_align (&addr, &len);
-#if _POSIX_MEMLOCK
+#if _POSIX_MEMLOCK_RANGE
         RETVAL = munlock (addr, len);
 #else
         RETVAL = ((errno = ENOSYS), -1);

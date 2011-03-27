@@ -11,7 +11,7 @@ our $VERSION = $IO::AIO::VERSION;
 
 Getopt::Long::Configure ("bundling", "no_ignore_case", "require_order", "auto_help", "auto_version");
 
-my ($opt_silent, $opt_print0, $opt_stat, $opt_nodirs, $opt_nofiles);
+my ($opt_silent, $opt_print0, $opt_stat, $opt_nodirs, $opt_nofiles, $opt_grep);
 
 GetOptions
    "quiet|q"  => \$opt_silent,
@@ -19,13 +19,20 @@ GetOptions
    "stat|s"   => \$opt_stat,
    "dirs|d"   => \$opt_nofiles,
    "files|f"  => \$opt_nodirs,
+   "grep|g=s" => \$opt_grep,
    or die "Usage: try $0 --help";
 
 @ARGV = "." unless @ARGV;
 
+$opt_grep &&= qr{$opt_grep}s;
+
 sub printfn {
    my ($prefix, $files, $suffix) = @_;
 
+   if ($opt_grep) {
+      @$files = grep "$prefix$_" =~ $opt_grep, @$files;
+   }
+   
    if ($opt_print0) {
       print map "$prefix$_$suffix\0", @$files;
    } elsif (!$opt_silent) {

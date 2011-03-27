@@ -5,12 +5,17 @@ use IO::AIO;
 
 # this is a lame test, but....
 
-BEGIN { plan tests => 9 }
+BEGIN { plan tests => 10 }
 
 IO::AIO::min_parallel 2;
 
-aio_nop sub {
+IO::AIO::aio_nop sub {
    print "ok 6\n";
+};
+
+IO::AIO::aio_busy 0.2, sub {
+   print "ok 8\n";
+
 };
 
 print "ok 1\n";
@@ -22,7 +27,7 @@ if (open FH, "-|") {
    };
    print "ok 5\n";
    IO::AIO::poll while IO::AIO::nreqs;
-   print "ok 8\n";
+   print "ok 9\n";
 } else {
    print "ok 2\n";
    aio_stat "/", sub {
@@ -33,5 +38,5 @@ if (open FH, "-|") {
    exit;
 }
 
-print "ok 9\n";
+print "ok 10\n";
 
