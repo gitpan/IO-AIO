@@ -123,6 +123,52 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 #include "libeio/config.h"
 #include "libeio/eio.h"
 
+/* Linux/others */
+#ifndef O_ASYNC
+# define O_ASYNC 0
+#endif
+#ifndef O_DIRECT
+# define O_DIRECT 0
+#endif
+#ifndef O_NOATIME
+# define O_NOATIME 0
+#endif
+
+/* POSIX */
+#ifndef O_CLOEXEC
+# define O_CLOEXEC 0
+#endif
+#ifndef O_NOFOLLOW
+# define O_NOFOLLOW 0
+#endif
+#ifndef O_NOCTTY
+# define O_NOCTTY 0
+#endif
+#ifndef O_NONBLOCK
+# define O_NONBLOCK 0
+#endif
+#ifndef O_EXEC
+# define O_EXEC 0
+#endif
+#ifndef O_SEARCH
+# define O_SEARCH 0
+#endif
+#ifndef O_DIRECTORY
+# define O_DIRECTORY 0
+#endif
+#ifndef O_DSYNC
+# define O_DSYNC 0
+#endif
+#ifndef O_RSYNC
+# define O_RSYNC 0
+#endif
+#ifndef O_SYNC
+# define O_SYNC 0
+#endif
+#ifndef O_TTY_INIT
+# define O_TTY_INIT 0
+#endif
+
 #ifndef POSIX_FADV_NORMAL
 # define POSIX_FADV_NORMAL 0
 #endif
@@ -766,6 +812,22 @@ BOOT:
     const_iv (O_TRUNC)
     const_iv (O_EXCL)
     const_iv (O_APPEND)
+
+    const_iv (O_ASYNC)
+    const_iv (O_DIRECT)
+    const_iv (O_NOATIME)
+
+    const_iv (O_CLOEXEC)
+    const_iv (O_NOCTTY)
+    const_iv (O_NOFOLLOW)
+    const_iv (O_NONBLOCK)
+    const_iv (O_EXEC)
+    const_iv (O_SEARCH)
+    const_iv (O_DIRECTORY)
+    const_iv (O_DSYNC)
+    const_iv (O_RSYNC)
+    const_iv (O_SYNC)
+    const_iv (O_TTY_INIT)
 
     const_iv (S_IFIFO)
     const_iv (S_IFCHR)

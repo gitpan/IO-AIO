@@ -7,8 +7,12 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 TODO: aio_mincore?
-TODO: add? also linux-specific stuff?
-TODO: O_EXEC O_SEARCH O_CLOEXEC O_DIRECTORY O_DSYNC O_NOCTTY O_NOFOLLOW O_NONBLOCK O_RSYNC O_SYNC O_TTY_INIT O_DIRECT O_LARGEFILE O_NOATIME O_ASYNC
+
+3.9  Fri May 27 02:43:47 CEST 2011
+        - (libeio) fix memory corruption in aio_readdirx for the flags
+          combination READDIR_STAT_ORDER | READDIR_DIRS_FIRST.
+        - add lots of newre POSIX and GNU/Linux-specific open
+          flags.
 
 3.8  Sun Mar 27 12:25:33 CEST 2011
 	- use nonstandard but maybe-working-on-bsd fork technique.
@@ -16,7 +20,7 @@ TODO: O_EXEC O_SEARCH O_CLOEXEC O_DIRECTORY O_DSYNC O_NOCTTY O_NOFOLLOW O_NONBLO
 	- support setting of idle timeout value (IO::AIO::idle_timeout).
 
 3.72 Fri Feb 11 04:25:38 CET 2011
-	- use _POSIX_MEMLOCK_RANGE to detetc mlock/munlock.
+	- use _POSIX_MEMLOCK_RANGE to detect mlock/munlock.
         - aio_mknod always used a dev_t value of 0.
         - new treescan option: --grep.
         - add more S_IF macros, and major/minor/makedev "macros".

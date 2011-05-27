@@ -170,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.8';
+   our $VERSION = '3.9';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -369,6 +369,15 @@ Example:
          die "open failed: $!\n";
       }
    };
+
+In addition to all the common open modes/flags (C<O_RDONLY>, C<O_WRONLY>,
+C<O_RDWR>, C<O_CREAT>, C<O_TRUNC>, C<O_EXCL> and C<O_APPEND>), the
+following POSIX and non-POSIX constants are available (missing ones on
+your system are, as usual, C<0>):
+
+C<O_ASYNC>, C<O_DIRECT>, C<O_NOATIME>, C<O_CLOEXEC>, C<O_NOCTTY>, C<O_NOFOLLOW>,
+C<O_NONBLOCK>, C<O_EXEC>, C<O_SEARCH>, C<O_DIRECTORY>, C<O_DSYNC>,
+C<O_RSYNC>, C<O_SYNC> and C<O_TTY_INIT>.
 
 
 =item aio_close $fh, $callback->($status)
@@ -670,8 +679,8 @@ flags will also be passed to the callback, possibly modified):
 
 =item IO::AIO::READDIR_DENTS
 
-When this flag is off, then the callback gets an arrayref with of names
-only (as with C<aio_readdir>), otherwise it gets an arrayref with
+When this flag is off, then the callback gets an arrayref consisting of
+names only (as with C<aio_readdir>), otherwise it gets an arrayref with
 C<[$name, $type, $inode]> arrayrefs, each describing a single directory
 entry in more detail.
 
@@ -694,13 +703,13 @@ systems that do not deliver the inode information.
 =item IO::AIO::READDIR_DIRS_FIRST
 
 When this flag is set, then the names will be returned in an order where
-likely directories come first. This is useful when you need to quickly
-find directories, or you want to find all directories while avoiding to
-stat() each entry.
+likely directories come first, in optimal stat order. This is useful when
+you need to quickly find directories, or you want to find all directories
+while avoiding to stat() each entry.
 
 If the system returns type information in readdir, then this is used
-to find directories directly.  Otherwise, likely directories are files
-beginning with ".", or otherwise files with no dots, of which files with
+to find directories directly. Otherwise, likely directories are names
+beginning with ".", or otherwise names with no dots, of which names with
 short names are tried first.
 
 =item IO::AIO::READDIR_STAT_ORDER
@@ -1408,15 +1417,23 @@ See C<poll_cb> for an example.
 
 =item IO::AIO::poll_cb
 
-Process some outstanding events on the result pipe. You have to call this
-regularly. Returns C<0> if all events could be processed, or C<-1> if it
-returned earlier for whatever reason. Returns immediately when no events
-are outstanding. The amount of events processed depends on the settings of
-C<IO::AIO::max_poll_req> and C<IO::AIO::max_poll_time>.
+Process some outstanding events on the result pipe. You have to call
+this regularly. Returns C<0> if all events could be processed (or there
+were no events to process), or C<-1> if it returned earlier for whatever
+reason. Returns immediately when no events are outstanding. The amount of
+events processed depends on the settings of C<IO::AIO::max_poll_req> and
+C<IO::AIO::max_poll_time>.
 
 If not all requests were processed for whatever reason, the filehandle
 will still be ready when C<poll_cb> returns, so normally you don't have to
 do anything special to have it called later.
+
+Apart from calling C<IO::AIO::poll_cb> when the event filehandle becomes
+ready, it can be beneficial to call this function from loops which submit
+a lot of requests, to make sure the results get processed when they become
+available and not just when the loop is finished and the event loop takes
+over again. This function returns very fast when there are no outstanding
+requests.
 
 Example: Install an Event watcher that automatically calls
 IO::AIO::poll_cb with high priority (more examples can be found in the
