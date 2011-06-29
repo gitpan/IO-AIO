@@ -6,7 +6,6 @@ Makefile.PL
 schmorp.h
 AIO.pm
 AIO.xs
-ecb.h
 bin/treescan
 t/00_load.t
 t/01_stat.t
@@ -19,6 +18,7 @@ t/07_feeder.t
 t/aio_test_common.pm
 
 libeio/xthread.h
+libeio/ecb.h
 libeio/eio.h
 libeio/eio.c
 libeio/libeio.m4

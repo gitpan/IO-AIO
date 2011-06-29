@@ -11,6 +11,9 @@ TODO: getxattr etc.?
 TODO: MS_xxx, posix_fadvise, posix_madvise
 TODO: realpath
 
+3.93  Wed Jun 29 23:44:18 CEST 2011
+	- ECB.H WAS MISSING.
+
 3.92  Wed Jun 29 14:45:41 CEST 2011
 	- ecb.h was missing.
 
