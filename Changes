@@ -11,6 +11,9 @@ TODO: getxattr etc.?
 TODO: MS_xxx, posix_fadvise, posix_madvise
 TODO: realpath
 
+3.92  Wed Jun 29 14:45:41 CEST 2011
+	- ecb.h was missing.
+
 3.91  Wed Jun 29 13:24:42 CEST 2011
         - (libeio) work around a Linux (and likely FreeBSD and other
           kernels) bug where sendfile would not transfer all the requested

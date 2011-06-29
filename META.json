@@ -11,7 +11,7 @@
    },
    "generated_by" : "ExtUtils::MakeMaker::JSONMETA version 7.000",
    "distribution_type" : "module",
-   "version" : "3.91",
+   "version" : "3.92",
    "name" : "IO-AIO",
    "author" : [],
    "license" : "unknown",
