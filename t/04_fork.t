@@ -1,5 +1,12 @@
 #!/usr/bin/perl
 
+BEGIN {
+   if ($^O ne "linux") {
+      print qq{1..0 # SKIP only linux supports pthreads and fork\n};
+      exit 0;
+   }
+}
+
 use Test;
 use IO::AIO;
 
@@ -13,7 +20,7 @@ IO::AIO::aio_nop sub {
    print "ok 6\n";
 };
 
-IO::AIO::aio_busy 0.2, sub {
+IO::AIO::aio_busy 1, sub {
    print "ok 8\n";
 
 };

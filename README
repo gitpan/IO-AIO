@@ -369,13 +369,15 @@ FUNCTIONS
         reading at byte offset $in_offset, and starts writing at the current
         file offset of $out_fh. Because of that, it is not safe to issue
         more than one "aio_sendfile" per $out_fh, as they will interfere
-        with each other.
+        with each other. The same $in_fh works fine though, as this function
+        does not move or use the file offset of $in_fh.
 
         Please note that "aio_sendfile" can read more bytes from $in_fh than
-        are written, and there is no way to find out how many bytes have
-        been read from "aio_sendfile" alone, as "aio_sendfile" only provides
-        the number of bytes written to $out_fh. Only if the result value
-        equals $length one can assume that $length bytes have been read.
+        are written, and there is no way to find out how many more bytes
+        have been read from "aio_sendfile" alone, as "aio_sendfile" only
+        provides the number of bytes written to $out_fh. Only if the result
+        value equals $length one can assume that $length bytes have been
+        read.
 
         Unlike with other "aio_" functions, it makes a lot of sense to use
         "aio_sendfile" on non-blocking sockets, as long as one end
@@ -385,17 +387,25 @@ FUNCTIONS
         some data with readahead, then fails to write all data, and when the
         socket is ready the next time, the data in the cache is already
         lost, forcing "aio_sendfile" to again hit the disk. Explicit
-        "aio_read" + "aio_write" let's you control resource usage much
-        better.
+        "aio_read" + "aio_write" let's you better control resource usage.
 
-        This call tries to make use of a native "sendfile" syscall to
+        This call tries to make use of a native "sendfile"-like syscall to
         provide zero-copy operation. For this to work, $out_fh should refer
         to a socket, and $in_fh should refer to an mmap'able file.
 
         If a native sendfile cannot be found or it fails with "ENOSYS",
-        "ENOTSUP", "EOPNOTSUPP", "EAFNOSUPPORT", "EPROTOTYPE" or "ENOTSOCK",
-        it will be emulated, so you can call "aio_sendfile" on any type of
-        filehandle regardless of the limitations of the operating system.
+        "EINVAL", "ENOTSUP", "EOPNOTSUPP", "EAFNOSUPPORT", "EPROTOTYPE" or
+        "ENOTSOCK", it will be emulated, so you can call "aio_sendfile" on
+        any type of filehandle regardless of the limitations of the
+        operating system.
+
+        As native sendfile syscalls (as practically any non-POSIX interface
+        hacked together in a hurry to improve benchmark numbers) tend to be
+        rather buggy on many systems, this implementation tries to work
+        around some known bugs in Linux and FreeBSD kernels (probably
+        others, too), but that might fail, so you really really should check
+        the return value of "aio_sendfile" - fewre bytes than expected might
+        have been transferred.
 
     aio_readahead $fh,$offset,$length, $callback->($retval)
         "aio_readahead" populates the page cache with data from a file so
@@ -1172,22 +1182,39 @@ FUNCTIONS
         threads are allowed to exit. SEe "IO::AIO::max_idle".
 
     IO::AIO::max_outstanding $maxreqs
+        Sets the maximum number of outstanding requests to $nreqs. If you do
+        queue up more than this number of requests, the next call to
+        "IO::AIO::poll_cb" (and other functions calling "poll_cb", such as
+        "IO::AIO::flush" or "IO::AIO::poll") will block until the limit is
+        no longer exceeded.
+
+        In other words, this setting does not enforce a queue limit, but can
+        be used to make poll functions block if the limit is exceeded.
+
         This is a very bad function to use in interactive programs because
         it blocks, and a bad way to reduce concurrency because it is
         inexact: Better use an "aio_group" together with a feed callback.
 
-        Sets the maximum number of outstanding requests to $nreqs. If you do
-        queue up more than this number of requests, the next call to the
-        "poll_cb" (and "poll_some" and other functions calling "poll_cb")
-        function will block until the limit is no longer exceeded.
+        It's main use is in scripts without an event loop - when you want to
+        stat a lot of files, you can write somehting like this:
 
-        The default value is very large, so there is no practical limit on
-        the number of outstanding requests.
+           IO::AIO::max_outstanding 32;
 
-        You can still queue as many requests as you want. Therefore,
-        "max_outstanding" is mainly useful in simple scripts (with low
-        values) or as a stop gap to shield against fatal memory overflow
-        (with large values).
+           for my $path (...) {
+              aio_stat $path , ...;
+              IO::AIO::poll_cb;
+           }
+
+           IO::AIO::flush;
+
+        The call to "poll_cb" inside the loop will normally return
+        instantly, but as soon as more thna 32 reqeusts are in-flight, it
+        will block until some requests have been handled. This keeps the
+        loop from pushing a large number of "aio_stat" requests onto the
+        queue.
+
+        The default value for "max_outstanding" is very large, so there is
+        no practical limit on the number of outstanding requests.
 
    STATISTICAL INFORMATION
     IO::AIO::nreqs
@@ -1343,19 +1370,17 @@ EVENT LOOP INTEGRATION
                                  \&IO::AIO::poll_cb);
 
   FORK BEHAVIOUR
-    This module should do "the right thing" when the process using it forks:
+    Usage of pthreads in a program changes the semantics of fork
+    considerably. Specifically, only async-safe functions can be called
+    after fork. Perl doesn't know about this, so in general, you cannot call
+    fork with defined behaviour in perl. IO::AIO uses pthreads, so this
+    applies, but many other extensions and (for inexplicable reasons) perl
+    itself often is linked against pthreads, so this limitation applies.
 
-    Before the fork, IO::AIO enters a quiescent state where no requests can
-    be added in other threads and no results will be processed. After the
-    fork the parent simply leaves the quiescent state and continues
-    request/result processing, while the child frees the request/result
-    queue (so that the requests started before the fork will only be handled
-    in the parent). Threads will be started on demand until the limit set in
-    the parent process has been reached again.
-
-    In short: the parent will, after a short pause, continue as if fork had
-    not been called, while the child will act as if IO::AIO has not been
-    used yet.
+    Some operating systems have extensions that allow safe use of fork, and
+    this module should do "the right thing" on those, and tries on others.
+    At the time of this writing (2011) only GNU/Linux supports these
+    extensions to POSIX.
 
   MEMORY USAGE
     Per-request usage:

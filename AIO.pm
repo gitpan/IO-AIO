@@ -170,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.9';
+   our $VERSION = '3.91';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -438,32 +438,40 @@ Tries to copy C<$length> bytes from C<$in_fh> to C<$out_fh>. It starts
 reading at byte offset C<$in_offset>, and starts writing at the current
 file offset of C<$out_fh>. Because of that, it is not safe to issue more
 than one C<aio_sendfile> per C<$out_fh>, as they will interfere with each
-other.
+other. The same C<$in_fh> works fine though, as this function does not
+move or use the file offset of C<$in_fh>.
 
 Please note that C<aio_sendfile> can read more bytes from C<$in_fh> than
-are written, and there is no way to find out how many bytes have been read
-from C<aio_sendfile> alone, as C<aio_sendfile> only provides the number of
-bytes written to C<$out_fh>. Only if the result value equals C<$length>
-one can assume that C<$length> bytes have been read.
+are written, and there is no way to find out how many more bytes have been
+read from C<aio_sendfile> alone, as C<aio_sendfile> only provides the
+number of bytes written to C<$out_fh>. Only if the result value equals
+C<$length> one can assume that C<$length> bytes have been read.
 
 Unlike with other C<aio_> functions, it makes a lot of sense to use
 C<aio_sendfile> on non-blocking sockets, as long as one end (typically
 the C<$in_fh>) is a file - the file I/O will then be asynchronous, while
-the socket I/O will be non-blocking. Note, however, that you can run into
-a trap where C<aio_sendfile> reads some data with readahead, then fails
-to write all data, and when the socket is ready the next time, the data
-in the cache is already lost, forcing C<aio_sendfile> to again hit the
-disk. Explicit C<aio_read> + C<aio_write> let's you control resource usage
-much better.
+the socket I/O will be non-blocking. Note, however, that you can run
+into a trap where C<aio_sendfile> reads some data with readahead, then
+fails to write all data, and when the socket is ready the next time, the
+data in the cache is already lost, forcing C<aio_sendfile> to again hit
+the disk. Explicit C<aio_read> + C<aio_write> let's you better control
+resource usage.
 
-This call tries to make use of a native C<sendfile> syscall to provide
-zero-copy operation. For this to work, C<$out_fh> should refer to a
-socket, and C<$in_fh> should refer to an mmap'able file.
+This call tries to make use of a native C<sendfile>-like syscall to
+provide zero-copy operation. For this to work, C<$out_fh> should refer to
+a socket, and C<$in_fh> should refer to an mmap'able file.
 
 If a native sendfile cannot be found or it fails with C<ENOSYS>,
-C<ENOTSUP>, C<EOPNOTSUPP>, C<EAFNOSUPPORT>, C<EPROTOTYPE> or C<ENOTSOCK>,
-it will be emulated, so you can call C<aio_sendfile> on any type of
-filehandle regardless of the limitations of the operating system.
+C<EINVAL>, C<ENOTSUP>, C<EOPNOTSUPP>, C<EAFNOSUPPORT>, C<EPROTOTYPE> or
+C<ENOTSOCK>, it will be emulated, so you can call C<aio_sendfile> on any
+type of filehandle regardless of the limitations of the operating system.
+
+As native sendfile syscalls (as practically any non-POSIX interface hacked
+together in a hurry to improve benchmark numbers) tend to be rather buggy
+on many systems, this implementation tries to work around some known bugs
+in Linux and FreeBSD kernels (probably others, too), but that might fail,
+so you really really should check the return value of C<aio_sendfile> -
+fewre bytes than expected might have been transferred.
 
 
 =item aio_readahead $fh,$offset,$length, $callback->($retval)
@@ -864,7 +872,7 @@ sub aio_move($$;$) {
          add $grp aio_copy $src, $dst, sub {
             $grp->result ($_[0]);
 
-            if (!$_[0]) {
+            unless ($_[0]) {
                aioreq_pri $pri;
                add $grp aio_unlink $src;
             }
@@ -1566,21 +1574,38 @@ allowed to exit. SEe C<IO::AIO::max_idle>.
 
 =item IO::AIO::max_outstanding $maxreqs
 
+Sets the maximum number of outstanding requests to C<$nreqs>. If
+you do queue up more than this number of requests, the next call to
+C<IO::AIO::poll_cb> (and other functions calling C<poll_cb>, such as
+C<IO::AIO::flush> or C<IO::AIO::poll>) will block until the limit is no
+longer exceeded.
+
+In other words, this setting does not enforce a queue limit, but can be
+used to make poll functions block if the limit is exceeded.
+
 This is a very bad function to use in interactive programs because it
 blocks, and a bad way to reduce concurrency because it is inexact: Better
 use an C<aio_group> together with a feed callback.
 
-Sets the maximum number of outstanding requests to C<$nreqs>. If you
-do queue up more than this number of requests, the next call to the
-C<poll_cb> (and C<poll_some> and other functions calling C<poll_cb>)
-function will block until the limit is no longer exceeded.
+It's main use is in scripts without an event loop - when you want to stat
+a lot of files, you can write somehting like this:
 
-The default value is very large, so there is no practical limit on the
-number of outstanding requests.
+   IO::AIO::max_outstanding 32;
 
-You can still queue as many requests as you want. Therefore,
-C<max_outstanding> is mainly useful in simple scripts (with low values) or
-as a stop gap to shield against fatal memory overflow (with large values).
+   for my $path (...) {
+      aio_stat $path , ...;
+      IO::AIO::poll_cb;
+   }
+
+   IO::AIO::flush;
+
+The call to C<poll_cb> inside the loop will normally return instantly, but
+as soon as more thna C<32> reqeusts are in-flight, it will block until
+some requests have been handled. This keeps the loop from pushing a large
+number of C<aio_stat> requests onto the queue.
+
+The default value for C<max_outstanding> is very large, so there is no
+practical limit on the number of outstanding requests.
 
 =back
 
@@ -1766,19 +1791,17 @@ some examples of how to do this:
 
 =head2 FORK BEHAVIOUR
 
-This module should do "the right thing" when the process using it forks:
+Usage of pthreads in a program changes the semantics of fork
+considerably. Specifically, only async-safe functions can be called after
+fork. Perl doesn't know about this, so in general, you cannot call fork
+with defined behaviour in perl. IO::AIO uses pthreads, so this applies,
+but many other extensions and (for inexplicable reasons) perl itself often
+is linked against pthreads, so this limitation applies.
 
-Before the fork, IO::AIO enters a quiescent state where no requests
-can be added in other threads and no results will be processed. After
-the fork the parent simply leaves the quiescent state and continues
-request/result processing, while the child frees the request/result queue
-(so that the requests started before the fork will only be handled in the
-parent). Threads will be started on demand until the limit set in the
-parent process has been reached again.
-
-In short: the parent will, after a short pause, continue as if fork had
-not been called, while the child will act as if IO::AIO has not been used
-yet.
+Some operating systems have extensions that allow safe use of fork, and
+this module should do "the right thing" on those, and tries on others. At
+the time of this writing (2011) only GNU/Linux supports these extensions
+to POSIX.
 
 =head2 MEMORY USAGE
 

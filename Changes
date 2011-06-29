@@ -7,6 +7,25 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: fallocate, if it wouldn't be so useless.
 TODO: aio_mincore?
+TODO: getxattr etc.?
+TODO: MS_xxx, posix_fadvise, posix_madvise
+TODO: realpath
+
+3.91  Wed Jun 29 13:24:42 CEST 2011
+        - (libeio) work around a Linux (and likely FreeBSD and other
+          kernels) bug where sendfile would not transfer all the requested
+          bytes on large transfers, using a heuristic.
+        - buggy sendfile caused aio_move/copy to sometimes fail for big
+          files (fortunately it checks that the whole file has been
+          transferred...)
+        - use libecb for higher performance and higher portability.
+        - (libeio) disable sendfile on darwin, it's too broken.
+        - disable fork tests on !linux, as only linux supports mixing
+          pthread and fork in perl.
+        - document the fact that fork doesn't work anymore when using
+          this module, on anything !GNU/Linux.
+        - increase timeout in t/04_fork.t, as too many CPAN-tester setups
+          run on a 0.1MHz cpu. Or so.
 
 3.9  Fri May 27 02:43:47 CEST 2011
         - (libeio) fix memory corruption in aio_readdirx for the flags
