@@ -1,13 +1,11 @@
 $| = 1;
 
-if (-f "/etc/passwd" and -d "/etc") {
+if (-f "AIO.xs" and -d "bin") {
    print "1..2\n";
 } else {
-   print "1..0 # Skipped: unexpected /etc and/or /etc/passwd\n";
+   print "1..0 # Skipped: unexpected bin and/or AIO.xs\n";
    exit;
 }
-
-# relies on /etc/passwd to exist...
 
 use Fcntl;
 use IO::AIO;
@@ -23,7 +21,7 @@ sub pcb {
 
 my $pwd;
 
-aio_open "/etc/passwd", O_RDONLY, 0, sub {
+aio_open "AIO.xs", O_RDONLY, 0, sub {
    print $_[0] ? "ok" : "not ok", " 1\n";
    $pwd = $_[0];
 };

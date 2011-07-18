@@ -170,12 +170,13 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '3.93';
+   our $VERSION = '4.0';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
-                     aio_scandir aio_symlink aio_readlink aio_sync aio_fsync
-                     aio_fdatasync aio_sync_file_range aio_pathsync aio_readahead
+                     aio_scandir aio_symlink aio_readlink aio_realpath aio_sync aio_fsync
+                     aio_fdatasync aio_sync_file_range aio_fallocate
+                     aio_pathsync aio_readahead
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate
@@ -224,6 +225,7 @@ documentation.
    aio_link $srcpath, $dstpath, $callback->($status)
    aio_symlink $srcpath, $dstpath, $callback->($status)
    aio_readlink $path, $callback->($link)
+   aio_realpath $path, $callback->($link)
    aio_rename $srcpath, $dstpath, $callback->($status)
    aio_mkdir $pathname, $mode, $callback->($status)
    aio_rmdir $pathname, $callback->($status)
@@ -643,6 +645,16 @@ the path C<$dstpath> and call the callback with the result code.
 Asynchronously read the symlink specified by C<$path> and pass it to
 the callback. If an error occurs, nothing or undef gets passed to the
 callback.
+
+
+=item aio_realpath $path, $callback->($path)
+
+Asynchronously make the path absolute and resolve any symlinks in
+C<$path>. The resulting path only consists of directories (Same as
+L<Cwd::realpath>).
+
+This request can be used to get the absolute path of the current working
+directory by passing it a path of F<.> (a single dot).
 
 
 =item aio_rename $srcpath, $dstpath, $callback->($status)
@@ -1794,14 +1806,33 @@ some examples of how to do this:
 Usage of pthreads in a program changes the semantics of fork
 considerably. Specifically, only async-safe functions can be called after
 fork. Perl doesn't know about this, so in general, you cannot call fork
-with defined behaviour in perl. IO::AIO uses pthreads, so this applies,
-but many other extensions and (for inexplicable reasons) perl itself often
-is linked against pthreads, so this limitation applies.
+with defined behaviour in perl if pthreads are involved. IO::AIO uses
+pthreads, so this applies, but many other extensions and (for inexplicable
+reasons) perl itself often is linked against pthreads, so this limitation
+applies to quite a lot of perls.
 
-Some operating systems have extensions that allow safe use of fork, and
-this module should do "the right thing" on those, and tries on others. At
-the time of this writing (2011) only GNU/Linux supports these extensions
-to POSIX.
+This module no longer tries to fight your OS, or POSIX. That means IO::AIO
+only works in the process that loaded it. Forking is fully supported, but
+using IO::AIO in the child is not.
+
+You might get around by not I<using> IO::AIO before (or after)
+forking. You could also try to call the L<IO::AIO::reinit> function in the
+child:
+
+=over 4
+
+=item IO::AIO::reinit
+
+Abondons all current requests and I/O threads and simply reinitialises all
+data structures. This is not an operation suppported by any standards, but
+happens to work on GNU/Linux and some newer BSD systems.
+
+The only reasonable use for this function is to call it after forking, if
+C<IO::AIO> was used in the parent. Calling it while IO::AIO is active in
+the process will result in undefined behaviour. Calling it at any time
+will also result in any undefined (by POSIX) behaviour.
+
+=back
 
 =head2 MEMORY USAGE
 

@@ -50,7 +50,7 @@ pcb;
 close F;
 
 aio_symlink "\\test\\", $some_link, sub {
-   if ($^O eq "cygwin") {
+   if ($^O eq "cygwin" or $^O eq "MSWin32") {
       ok (1);
       ok (1);
    } else {

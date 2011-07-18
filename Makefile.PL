@@ -4,20 +4,37 @@ use ExtUtils::MakeMaker;
 
 use Config;
 
-if ($^O =~ /win32/i or $^O =~ /mswin/) {
-
+if ($^O eq "MSWin32") {
    # configuration on windows is hardcoded - as always
 
-   warn "your platform is not standards-compliant, you have to port this module first\n";
-   warn "using some hardcoded config that will not work on your system\n";
+   print STDERR <<EOF;
 
-   $INC  = "-I/Perl/lib/CORE -I/sdk/include -I/vc98/include -I/gtk/include -I/gtk/include/pango-1.0 -I/gtk/include/glib-2.0 -I/gtk/lib/glib-2.0/include/ -I/gtk/include/freetype2";
-   $LIBS = ["-L/gtk/lib -lpthreadVC2"];
+***
+*** Your platform is not standards compliant. To get this module working, you need to
+*** download and install win32 pthread (http://sourceware.org/pthreads-win32/)
+*** in /gtk/{lib,include}
+*** also, the windows SDK is expected to be installed in /sdk
+*** and visual C is expected to be installed in /vc98
+***
+*** You can set the INC and LIBS environment variables
+*** accordingly before running Makeifle.PL, or you can
+*** pass INC and LIBS arguments to Makefile.PL itself.
+***
+
+EOF
+
+   $INC  = "$ENV{INC} -I/sdk/include -I/vc98/include -I/gtk/include";
+   $LIBS = ["$ENV{LIBS} -L/gtk/lib -lpthreadVC2"];
+
+   open my $fh, ">libeio/config.h"
+      or die "libeio/config.h: $!";
+   print $fh <<EOF;
+EOF
 
 } else {
 
    $INC  = "";
-   $LIBS = ['-lpthread', '-lpthreads', '-lpthreadVC2', ''];
+   $LIBS = ['-lpthread', '-lpthreads', ''];
 
    if ($^O =~ /bsd/i) {
       print <<EOF;

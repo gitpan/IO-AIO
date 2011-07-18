@@ -1,9 +1,9 @@
 $| = 1;
 
-if (-f "/etc/passwd" and -d "/etc") {
+if (-f "AIO.xs" and -d "bin") {
    print "1..10\n";
 } else {
-   print "1..0 # Skipped: unexpected /etc and/or /etc/passwd\n";
+   print "1..0 # Skipped: unexpected bin and/or AIO.xs\n";
    exit;
 }
 
@@ -21,7 +21,7 @@ sub pcb {
    }
 }
 
-aio_open "/etc/passwd", O_RDONLY, 0, sub {
+aio_open "AIO.xs", O_RDONLY, 0, sub {
    print $_[0] ? "ok" : "not ok", " 1\n";
 
    $pwd = $_[0];
@@ -29,13 +29,13 @@ aio_open "/etc/passwd", O_RDONLY, 0, sub {
 
 pcb;
 
-aio_stat "/etc", sub {
+aio_stat "bin", sub {
    print -d _ ? "ok" : "not ok", " 2\n";
 };
 
 pcb;
 
-aio_stat "/etc/passwd", sub {
+aio_stat "AIO.xs", sub {
    @pwd = stat _;
    print -f _ ? "ok" : "not ok", " 3\n";
    print eval  { lstat _; 1 }  ? "not ok" : "ok", " 4\n";
@@ -43,7 +43,7 @@ aio_stat "/etc/passwd", sub {
 
 pcb;
 
-aio_lstat "/etc/passwd", sub {
+aio_lstat "AIO.xs", sub {
    lstat _;
    print -f _ ? "ok" : "not ok", " 5\n";
    print eval  { stat _; 1 }  ? "ok" : "not ok", " 6\n";
@@ -55,7 +55,10 @@ print open (PWD, "<&" . fileno $pwd) ? "ok" : "not ok", " 7\n";
 
 aio_stat *PWD, sub {
    print -f _ ? "ok" : "not ok", " 8\n";
-   print +(join ":", @pwd) eq (join ":", stat _) ? "ok" : "not ok", " 9\n";
+   my @stat = stat _;
+   $stat[0] = $pwd[0]; # dev
+   $stat[6] = $pwd[6]; # rdev
+   print +(join ":", @pwd) eq (join ":", @stat) ? "ok" : "not ok", " 9\n";
 };
 
 pcb;

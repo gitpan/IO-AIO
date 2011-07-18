@@ -3,6 +3,9 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
+/* fallocate(2) is available */
+#undef HAVE_FALLOCATE
+
 /* fdatasync(2) is available */
 #undef HAVE_FDATASYNC
 

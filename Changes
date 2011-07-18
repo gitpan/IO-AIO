@@ -5,11 +5,21 @@ TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
-TODO: fallocate, if it wouldn't be so useless.
 TODO: aio_mincore?
 TODO: getxattr etc.?
-TODO: MS_xxx, posix_fadvise, posix_madvise
-TODO: realpath
+
+4.0   Mon Jul 18 05:01:10 CEST 2011
+	- INCOMPATIBLE CHANGE: fork is no longer supported (indeed, it never was),
+          see FORK BEHAVIOUR in manpage for details.
+	- passes testsuite on win32 now and may actually work
+          (activestate 5.10.1 / MSVC6, YMMV).
+	- (libeio) fix a deadlock where a wakeup signal could be missed when
+          a timeout occured at the same time.
+	- (libeio) added realpath.
+        - (libeio) added fallocate.
+	- (libeio) disabling sendfile on darwin unfortunately broke the emulation.
+        - (libeio) do not acquire any locks when forking.
+        - (libeio) use fewer time() syscalls when waiting for new requests.
 
 3.93  Wed Jun 29 23:44:18 CEST 2011
 	- ECB.H WAS MISSING.
@@ -36,7 +46,7 @@ TODO: realpath
 3.9  Fri May 27 02:43:47 CEST 2011
         - (libeio) fix memory corruption in aio_readdirx for the flags
           combination READDIR_STAT_ORDER | READDIR_DIRS_FIRST.
-        - add lots of newre POSIX and GNU/Linux-specific open
+        - add lots of newer POSIX and GNU/Linux-specific open
           flags.
 
 3.8  Sun Mar 27 12:25:33 CEST 2011

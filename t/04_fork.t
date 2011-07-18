@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 
 BEGIN {
-   if ($^O ne "linux") {
-      print qq{1..0 # SKIP only linux supports pthreads and fork\n};
+   if ($^O eq "MSWin32") {
+      print qq{1..0 # SKIP perl broken beyond repair\n};
       exit 0;
    }
 }
@@ -36,6 +36,7 @@ if (open FH, "-|") {
    IO::AIO::poll while IO::AIO::nreqs;
    print "ok 9\n";
 } else {
+   IO::AIO::reinit;
    print "ok 2\n";
    aio_stat "/", sub {
       print "ok 3\n";

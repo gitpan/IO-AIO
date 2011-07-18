@@ -13,7 +13,6 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <sched.h>
@@ -25,60 +24,55 @@
 /* perl namespace pollution */
 #undef VERSION
 
-#ifdef _WIN32
-
-# define EIO_STRUCT_DIRENT Direntry_t
-# undef malloc
-# undef free
-
-// perl overrides all those nice win32 functions
-# undef open
-# undef read
-# undef write
-# undef send
-# undef recv
-# undef stat
-# undef fstat
-# define lstat stat
-# undef truncate
-# undef ftruncate
-# undef open
-# undef close
-# undef unlink
-# undef rmdir
-# undef rename
-# undef lseek
-
-# define chown(a,b,c)    (errno = ENOSYS, -1)
-# define fchown(a,b,c)   (errno = ENOSYS, -1)
-# define fchmod(a,b)     (errno = ENOSYS, -1)
-# define symlink(a,b)    (errno = ENOSYS, -1)
-# define readlink(a,b,c) (errno = ENOSYS, -1)
-# define mknod(a,b,c)    (errno = ENOSYS, -1)
-# define truncate(a,b)   (errno = ENOSYS, -1)
-# define ftruncate(fd,o) chsize ((fd), (o))
-# define fsync(fd)       _commit (fd)
-# define opendir(fd)     (errno = ENOSYS, 0)
-# define readdir(fd)     (errno = ENOSYS, -1)
-# define closedir(fd)    (errno = ENOSYS, -1)
-# define mkdir(a,b)      mkdir (a)
-
-#else
-
-# include <sys/time.h>
-# include <sys/select.h>
-# include <unistd.h>
-# include <utime.h>
-# include <signal.h>
-# define EIO_STRUCT_DIRENT struct dirent
-
-#endif
-
 /* perl stupidly overrides readdir and maybe others */
 /* with thread-unsafe versions, imagine that :( */
 #undef readdir
 #undef opendir
 #undef closedir
+
+#ifdef _WIN32
+
+  // perl overrides all those nice libc functions
+
+  #undef malloc
+  #undef free
+  #undef open
+  #undef read
+  #undef write
+  #undef send
+  #undef recv
+  #undef stat
+  #undef lstat
+  #undef fstat
+  #undef truncate
+  #undef ftruncate
+  #undef open
+  #undef link
+  #undef close
+  #undef unlink
+  #undef mkdir
+  #undef rmdir
+  #undef rename
+  #undef lseek
+  #undef opendir
+  #undef readdir
+  #undef closedir
+  #undef chmod
+  #undef fchmod
+  #undef dup
+  #undef dup2
+  #undef abort
+  #undef pipe
+
+#else
+
+  #include <sys/time.h>
+  #include <sys/select.h>
+  #include <unistd.h>
+  #include <utime.h>
+  #include <signal.h>
+
+#endif
 
 #define EIO_STRUCT_STAT Stat_t
 
@@ -122,6 +116,13 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 
 #include "libeio/config.h"
 #include "libeio/eio.h"
+
+static int req_invoke    (eio_req *req);
+#define EIO_FINISH(req)  req_invoke (req)
+static void req_destroy  (eio_req *grp);
+#define EIO_DESTROY(req) req_destroy (req)
+
+#include "libeio/eio.c"
 
 /* Linux/others */
 #ifndef O_ASYNC
@@ -225,6 +226,12 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define PROT_EXEC 0
 #endif
 
+#ifndef ST_RDONLY
+# define ST_RDONLY	0
+#endif
+#ifndef ST_NOSUID
+# define ST_NOSUID	0
+#endif
 #ifndef ST_NODEV
 # define ST_NODEV       0
 #endif
@@ -318,16 +325,9 @@ static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
 # define PAGESIZE sysconf (_SC_PAGESIZE)
 #endif
 
-static int req_invoke    (eio_req *req);
-#define EIO_FINISH(req)  req_invoke (req)
-static void req_destroy  (eio_req *grp);
-#define EIO_DESTROY(req) req_destroy (req)
-
 enum {
   FLAG_SV2_RO_OFF = 0x40, /* data was set readonly */
 };
-
-#include "libeio/eio.c"
 
 typedef eio_req *aio_req;
 typedef eio_req *aio_req_ornot;
@@ -543,6 +543,7 @@ static int req_invoke (eio_req *req)
             {
               SV *rv = &PL_sv_undef;
              
+#ifndef _WIN32
               if (req->result >= 0)
                 {
                   EIO_STRUCT_STATVFS *f = EIO_STATVFS_BUF (req);
@@ -562,6 +563,7 @@ static int req_invoke (eio_req *req)
                   hv_store (hv, "flag"   , sizeof ("flag"   ) - 1, newSVval64 (f->f_flag   ), 0);
                   hv_store (hv, "namemax", sizeof ("namemax") - 1, newSVval64 (f->f_namemax), 0);
                 }
+#endif
 
               PUSHs (rv);
             }
@@ -587,6 +589,7 @@ static int req_invoke (eio_req *req)
             break;
 
           case EIO_READLINK:
+          case EIO_REALPATH:
             if (req->result > 0)
               PUSHs (sv_2mortal (newSVpvn (req->ptr2, req->result)));
             break;
@@ -596,6 +599,7 @@ static int req_invoke (eio_req *req)
           case EIO_FSTAT:
             PL_laststype   = req->type == EIO_LSTAT ? OP_LSTAT : OP_STAT;
             PL_laststatval = req->result;
+            /* if compilation fails here then perl's Stat_t is not struct _stati64 */
             PL_statcache   = *(EIO_STRUCT_STAT *)(req->ptr2);
             PUSHs (sv_result);
             break;
@@ -657,8 +661,6 @@ static void req_destroy (aio_req req)
 
 static void req_cancel_subs (aio_req grp)
 {
-  aio_req sub;
-
   if (grp->type != EIO_GROUP)
     return;
 
@@ -668,8 +670,7 @@ static void req_cancel_subs (aio_req grp)
   eio_grp_cancel (grp);
 }
 
-static void
-create_respipe (void)
+static void create_respipe (void)
 {
   if (s_epipe_renew (&respipe))
     croak ("IO::AIO: unable to initialize result pipe");
@@ -710,9 +711,13 @@ static int poll_cb (void)
     }
 }
 
-static void atfork_child (void)
+static void ecb_cold
+reinit (void)
 {
   create_respipe ();
+
+  if (eio_init (want_poll, done_poll) < 0)
+    croak ("IO::AIO: unable to initialise eio library");
 }
 
 /*****************************************************************************/
@@ -733,8 +738,7 @@ static void atfork_child (void)
 
 #define MMAP_MAGIC PERL_MAGIC_ext
 
-static int
-mmap_free (pTHX_ SV *sv, MAGIC *mg)
+static int mmap_free (pTHX_ SV *sv, MAGIC *mg)
 {
   int old_errno = errno;
   munmap (mg->mg_ptr, (size_t)mg->mg_obj);
@@ -760,8 +764,7 @@ static MGVTBL mmap_vtbl = {
 
 /*****************************************************************************/
 
-static SV *
-get_cb (SV *cb_sv)
+static SV * get_cb (SV *cb_sv)
 {
   SvGETMAGIC (cb_sv);
   return SvOK (cb_sv) ? s_get_cv_croak (cb_sv) : 0;
@@ -895,6 +898,8 @@ BOOT:
     const_eio (SYNC_FILE_RANGE_WRITE)
     const_eio (SYNC_FILE_RANGE_WAIT_AFTER)
 
+    const_eio (FALLOC_FL_KEEP_SIZE)
+
     const_eio (READDIR_DENTS)
     const_eio (READDIR_DIRS_FIRST)
     const_eio (READDIR_STAT_ORDER)
@@ -920,14 +925,14 @@ BOOT:
 
   newCONSTSUB (aio_stash, "PAGESIZE", newSViv (PAGESIZE));
 
-  create_respipe ();
-
-  if (eio_init (want_poll, done_poll) < 0)
-    croak ("IO::AIO: unable to initialise eio library");
-
-  /* atfork child called in fifo order, so before eio's handler */
-  X_THREAD_ATFORK (0, 0, atfork_child);
+  reinit ();
 }
+
+void
+reinit ()
+	PROTOTYPE:
+	CODE:
+	reinit ();
 
 void
 max_poll_reqs (unsigned int nreqs)
@@ -1021,27 +1026,50 @@ aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback
 }
 
 void
-aio_close (SV *fh, SV *callback=&PL_sv_undef)
+aio_fallocate (SV *fh, int mode, off_t offset, size_t len, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
-        static int close_pipe = -1; /* dummy fd to close fds via dup2 */
   	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
-        if (close_pipe < 0)
+        req->type = EIO_FALLOCATE;
+        req->sv1  = newSVsv (fh);
+        req->int1 = fd;
+        req->int2 = mode;
+        req->offs = offset;
+        req->size = len;
+
+        REQ_SEND (req);
+}
+
+void
+aio_close (SV *fh, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+        static int close_fd = -1; /* dummy fd to close fds via dup2 */
+  	int fd = s_fileno_croak (fh, 0);
+        dREQ;
+
+        if (expect_false (close_fd < 0))
           {
             int pipefd [2];
 
-            if (pipe (pipefd) < 0
-                || close (pipefd [1]) < 0
-                || fcntl (pipefd [0], F_SETFD, FD_CLOEXEC) < 0)
+            if (
+#ifdef _WIN32
+              _pipe (pipefd, 1, _O_BINARY) < 0
+#else
+              pipe (pipefd) < 0
+              || fcntl (pipefd [0], F_SETFD, FD_CLOEXEC) < 0
+#endif
+              || close (pipefd [1]) < 0
+            )
               abort (); /*D*/
 
-            close_pipe = pipefd [0];
+            close_fd = pipefd [0];
           }
 
         req->type = EIO_DUP2;
-        req->int1 = close_pipe;
+        req->int1 = close_fd;
         req->sv2  = newSVsv (fh);
         req->int2 = fd;
 
@@ -1103,12 +1131,14 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
 
 void
 aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
+        ALIAS:
+           aio_readlink = EIO_READLINK
+           aio_realpath = EIO_REALPATH
         PPCODE:
 {
-	SV *data;
         dREQ;
 
-        req->type = EIO_READLINK;
+        req->type = ix;
         req->sv1  = newSVsv (path);
         req->ptr1 = SvPVbyte_nolen (req->sv1);
 
