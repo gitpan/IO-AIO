@@ -9,6 +9,9 @@ TODO: aio_mincore?
 TODO: getxattr etc.?
 TODO: F_DUPFD_CLOEXEC
 
+4.11 Mon Oct 10 00:24:11 CEST 2011
+	- libeio didn't compile on !linux (Paul Howarth).
+
 4.1  Sun Oct  9 10:24:11 CEST 2011
         - IO::AIO did access uninitialised memory on unsuccessful stats.
 	- (libeio) added syncfs syscall wrapper.
