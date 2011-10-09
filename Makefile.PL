@@ -74,7 +74,7 @@ if ($^O =~ /linux/ && $Config{usemymalloc} eq "y") {
 ***
 *** WARNING:
 ***
-*** Your perl uses it's own memory allocator (-Dusemymalloc=y),
+*** Your perl uses its own memory allocator (-Dusemymalloc=y),
 *** which is known not to be threadsafe on GNU/Linux and probably
 *** other platforms (even when not used concurrently, it trashes
 *** the data structures of the system malloc running concurrently),

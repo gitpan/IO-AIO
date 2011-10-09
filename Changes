@@ -7,6 +7,21 @@ TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Artic
 TODO: aio_fcntl, at least for file-locking
 TODO: aio_mincore?
 TODO: getxattr etc.?
+TODO: F_DUPFD_CLOEXEC
+
+4.1  Sun Oct  9 10:24:11 CEST 2011
+        - IO::AIO did access uninitialised memory on unsuccessful stats.
+	- (libeio) added syncfs syscall wrapper.
+        - (libeio) set thread name on linux (ps -L/Hcx, top, gdb).
+        - (libeio) support multiple indepenent working directories.
+        - applied speling corrections by Nicholas Bamber.
+        - tune treescan #threads and #outstanding requests a bit.
+        - reduce the number of file descriptors in use at any one time
+          in treescan, to avoid running out of them (and using too much ram).
+        - take advantage of working directoriy abstractions
+          in aio_scandir and treescan.
+        - reduce compiled size by ~10% by not inlining some key functionality.
+        - added --progress switch to treescan.
 
 4.0   Mon Jul 18 05:01:10 CEST 2011
 	- INCOMPATIBLE CHANGE: fork is no longer supported (indeed, it never was),

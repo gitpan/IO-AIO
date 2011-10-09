@@ -3174,12 +3174,13 @@ fi
 done
 
 
-for ac_header in stdint.h
+for ac_header in stdint.h sys/syscall.h sys/prctl.h
 do :
-  ac_fn_c_check_header_mongrel "$LINENO" "stdint.h" "ac_cv_header_stdint_h" "$ac_includes_default"
-if test "x$ac_cv_header_stdint_h" = x""yes; then :
+  as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
+ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
+if eval test \"x\$"$as_ac_Header"\" = x"yes"; then :
   cat >>confdefs.h <<_ACEOF
-#define HAVE_STDINT_H 1
+#define `$as_echo "HAVE_$ac_header" | $as_tr_cpp` 1
 _ACEOF
 
 fi
@@ -3534,6 +3535,66 @@ fi
 $as_echo "$ac_cv_fallocate" >&6; }
 test $ac_cv_fallocate = yes &&
 $as_echo "#define HAVE_FALLOCATE 1" >>confdefs.h
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for sys_syncfs" >&5
+$as_echo_n "checking for sys_syncfs... " >&6; }
+if test "${ac_cv_sys_syncfs+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#include <unistd.h>
+#include <sys/syscall.h>
+int main (void)
+{
+  int res = syscall (__NR_syncfs, (int)0);
+}
+
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_sys_syncfs=yes
+else
+  ac_cv_sys_syncfs=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_sys_syncfs" >&5
+$as_echo "$ac_cv_sys_syncfs" >&6; }
+test $ac_cv_sys_syncfs = yes &&
+$as_echo "#define HAVE_SYS_SYNCFS 1" >>confdefs.h
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for prctl_set_name" >&5
+$as_echo_n "checking for prctl_set_name... " >&6; }
+if test "${ac_cv_prctl_set_name+set}" = set; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#include <sys/prctl.h>
+int main (void)
+{
+  char name = "test123";
+  int res = prctl (PR_SET_NAME, (unsigned long)name, 0, 0, 0);
+}
+
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_prctl_set_name=yes
+else
+  ac_cv_prctl_set_name=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_prctl_set_name" >&5
+$as_echo "$ac_cv_prctl_set_name" >&6; }
+test $ac_cv_prctl_set_name = yes &&
+$as_echo "#define HAVE_PRCTL_SET_NAME 1" >>confdefs.h
 
 
 

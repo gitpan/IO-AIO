@@ -104,11 +104,12 @@ typedef SV SV8; /* byte-sv, used for argument-checking */
 typedef int aio_rfd; /* read file desriptor */
 typedef int aio_wfd; /* write file descriptor */
 
-static HV *aio_stash, *aio_req_stash, *aio_grp_stash;
+static HV *aio_stash, *aio_req_stash, *aio_grp_stash, *aio_wd_stash;
 
 #define EIO_REQ_MEMBERS	\
   SV *callback;		\
   SV *sv1, *sv2;	\
+  SV *sv3, *sv4;	\
   STRLEN stroffset;	\
   SV *self;
 
@@ -331,6 +332,7 @@ enum {
 
 typedef eio_req *aio_req;
 typedef eio_req *aio_req_ornot;
+typedef eio_wd   aio_wd;
 
 static SV *on_next_submit;
 static int next_pri = EIO_PRI_DEFAULT;
@@ -341,20 +343,23 @@ static s_epipe respipe;
 static void req_destroy (aio_req req);
 static void req_cancel (aio_req req);
 
-static void want_poll (void)
+static void
+want_poll (void)
 {
   /* write a dummy byte to the pipe so fh becomes ready */
   s_epipe_signal (&respipe);
 }
 
-static void done_poll (void)
+static void
+done_poll (void)
 {
   /* read any signals sent by the worker threads */
   s_epipe_drain (&respipe);
 }
 
 /* must be called at most once */
-static SV *req_sv (aio_req req, HV *stash)
+static SV *
+req_sv (aio_req req, HV *stash)
 {
   if (!req->self)
     {
@@ -365,11 +370,19 @@ static SV *req_sv (aio_req req, HV *stash)
   return sv_2mortal (sv_bless (newRV_inc (req->self), stash));
 }
 
-static aio_req SvAIO_REQ (SV *sv)
+static SV *
+newSVaio_wd (aio_wd wd)
+{
+  return sv_bless (newRV_noinc (newSViv ((IV)wd)), aio_wd_stash);
+}
+
+static aio_req
+SvAIO_REQ (SV *sv)
 {
   MAGIC *mg;
 
   if (!SvROK (sv)
+      /* for speed reasons, we do not verify that SvROK actually has a stash ptr */
       || (SvSTASH (SvRV (sv)) != aio_grp_stash
           && SvSTASH (SvRV (sv)) != aio_req_stash
           && !sv_derived_from (sv, "IO::AIO::REQ")))
@@ -380,7 +393,19 @@ static aio_req SvAIO_REQ (SV *sv)
   return mg ? (aio_req)mg->mg_ptr : 0;
 }
 
-static void aio_grp_feed (aio_req grp)
+static aio_wd
+SvAIO_WD (SV *sv)
+{
+  if (!SvROK (sv)
+      || SvTYPE (SvRV (sv)) != SVt_PVMG
+      || SvSTASH (SvRV (sv)) != aio_wd_stash)
+    croak ("IO::AIO: expected a working directory object as returned by aio_wd");
+
+  return (aio_wd)(long)SvIVX (SvRV (sv));
+}
+
+static void
+aio_grp_feed (aio_req grp)
 {
   if (grp->sv2 && SvOK (grp->sv2))
     {
@@ -398,7 +423,8 @@ static void aio_grp_feed (aio_req grp)
     }
 }
 
-static void req_submit (eio_req *req)
+static void
+req_submit (eio_req *req)
 {
   eio_submit (req);
 
@@ -415,7 +441,8 @@ static void req_submit (eio_req *req)
     }
 }
 
-static int req_invoke (eio_req *req)
+static int
+req_invoke (eio_req *req)
 {
   if (req->flags & FLAG_SV2_RO_OFF)
     SvREADONLY_off (req->sv2);
@@ -446,6 +473,10 @@ static int req_invoke (eio_req *req)
 
       switch (req->type)
         {
+          case EIO_WD_OPEN:
+            PUSHs (req->result ? &PL_sv_undef : sv_2mortal (newSVaio_wd (req->wd)));
+            break;
+
           case EIO_READDIR:
             {
               SV *rv = &PL_sv_undef;
@@ -597,10 +628,12 @@ static int req_invoke (eio_req *req)
           case EIO_STAT:
           case EIO_LSTAT:
           case EIO_FSTAT:
-            PL_laststype   = req->type == EIO_LSTAT ? OP_LSTAT : OP_STAT;
-            PL_laststatval = req->result;
-            /* if compilation fails here then perl's Stat_t is not struct _stati64 */
-            PL_statcache   = *(EIO_STRUCT_STAT *)(req->ptr2);
+            PL_laststype = req->type == EIO_LSTAT ? OP_LSTAT : OP_STAT;
+
+            if (!(PL_laststatval = req->result))
+              /* if compilation fails here then perl's Stat_t is not struct _stati64 */
+              PL_statcache = *(EIO_STRUCT_STAT *)(req->ptr2);
+
             PUSHs (sv_result);
             break;
 
@@ -644,7 +677,8 @@ static int req_invoke (eio_req *req)
   return !!SvTRUE (ERRSV);
 }
 
-static void req_destroy (aio_req req)
+static void
+req_destroy (aio_req req)
 {
   if (req->self)
     {
@@ -654,12 +688,15 @@ static void req_destroy (aio_req req)
 
   SvREFCNT_dec (req->sv1);
   SvREFCNT_dec (req->sv2);
+  SvREFCNT_dec (req->sv3);
+  SvREFCNT_dec (req->sv4);
   SvREFCNT_dec (req->callback);
 
-  Safefree (req);
+  free (req);
 }
 
-static void req_cancel_subs (aio_req grp)
+static void
+req_cancel_subs (aio_req grp)
 {
   if (grp->type != EIO_GROUP)
     return;
@@ -670,13 +707,15 @@ static void req_cancel_subs (aio_req grp)
   eio_grp_cancel (grp);
 }
 
-static void create_respipe (void)
+static void ecb_cold
+create_respipe (void)
 {
   if (s_epipe_renew (&respipe))
     croak ("IO::AIO: unable to initialize result pipe");
 }
 
-static void poll_wait (void)
+static void
+poll_wait (void)
 {
   while (eio_nreqs ())
     {
@@ -695,7 +734,8 @@ static void poll_wait (void)
     }
 }
 
-static int poll_cb (void)
+static int
+poll_cb (void)
 {
   for (;;)
     {
@@ -738,7 +778,8 @@ reinit (void)
 
 #define MMAP_MAGIC PERL_MAGIC_ext
 
-static int mmap_free (pTHX_ SV *sv, MAGIC *mg)
+static int ecb_cold
+mmap_free (pTHX_ SV *sv, MAGIC *mg)
 {
   int old_errno = errno;
   munmap (mg->mg_ptr, (size_t)mg->mg_obj);
@@ -764,26 +805,35 @@ static MGVTBL mmap_vtbl = {
 
 /*****************************************************************************/
 
-static SV * get_cb (SV *cb_sv)
+static SV *
+get_cb (SV *cb_sv)
 {
   SvGETMAGIC (cb_sv);
   return SvOK (cb_sv) ? s_get_cv_croak (cb_sv) : 0;
 }
 
+static aio_req ecb_noinline
+dreq (SV *callback)
+{
+  SV *cb_cv;
+  aio_req req;
+  int req_pri = next_pri;
+  next_pri = EIO_PRI_DEFAULT;
+
+  cb_cv = get_cb (callback);
+
+  req = calloc (sizeof (*req), 1);
+  if (!req)
+    croak ("out of memory during eio_req allocation");
+
+  req->callback = SvREFCNT_inc (cb_cv);
+  req->pri = req_pri;
+
+  return req;
+}
+
 #define dREQ							\
-  SV *cb_cv;							\
-  aio_req req;							\
-  int req_pri = next_pri;					\
-  next_pri = EIO_PRI_DEFAULT;					\
-								\
-  cb_cv = get_cb (callback);					\
-								\
-  Newz (0, req, 1, eio_req);					\
-  if (!req)							\
-    croak ("out of memory during eio_req allocation");		\
-								\
-  req->callback = SvREFCNT_inc (cb_cv);				\
-  req->pri = req_pri
+  aio_req req = dreq (callback);				\
 
 #define REQ_SEND						\
   PUTBACK;							\
@@ -792,6 +842,72 @@ static SV * get_cb (SV *cb_sv)
 								\
   if (GIMME_V != G_VOID)					\
     XPUSHs (req_sv (req, aio_req_stash));
+
+ecb_inline void
+req_set_path (aio_req req, SV *path, SV **wdsv, SV **pathsv, eio_wd *wd, void **ptr)
+{
+  if (expect_false (SvROK (path)))
+    {
+      SV *rv = SvRV (path);
+      SV *wdob;
+
+      if (SvTYPE (rv) == SVt_PVAV && AvFILLp (rv) == 1)
+        {
+          path = AvARRAY (rv)[1];
+          wdob = AvARRAY (rv)[0];
+
+          if (SvOK (wdob))
+            {
+              *wd = SvAIO_WD (wdob);
+              *wdsv = SvREFCNT_inc_NN (SvRV (wdob));
+            }
+          else
+            *wd = EIO_INVALID_WD;
+        }
+      else if (SvTYPE (rv) == SVt_PVMG && SvSTASH (rv) == aio_wd_stash)
+        {
+          *wd = (aio_wd)(long)SvIVX (rv);
+          *wdsv = SvREFCNT_inc_NN (rv);
+          *ptr = ".";
+          return; /* path set to "." */
+        }
+      else
+        croak ("IO::AIO: pathname arguments must be specified as a string, an IO::AIO::WD object or a [IO::AIO::WD, path] pair");
+    }
+
+  *pathsv = newSVsv (path);
+  *ptr = SvPVbyte_nolen (*pathsv);
+}
+
+static void ecb_noinline
+req_set_path1 (aio_req req, SV *path)
+{
+  req_set_path (req, path, &req->sv1, &req->sv3, &req->wd, &req->ptr1);
+}
+
+static void ecb_noinline
+req_set_fh_or_path (aio_req req, int type_path, int type_fh, SV *fh_or_path)
+{
+  SV *rv = SvROK (fh_or_path) ? SvRV (fh_or_path) : fh_or_path;
+
+  switch (SvTYPE (rv))
+    {
+      case SVt_PVIO:
+      case SVt_PVLV:
+      case SVt_PVGV:
+        req->type = type_fh;
+        req->sv1  = newSVsv (fh_or_path);
+        req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
+        break;
+
+      default:
+        req->type = type_path;
+        req_set_path1 (req, fh_or_path);
+        break;
+    }
+}
+
+XS(boot_IO__AIO) ecb_cold;
 
 MODULE = IO::AIO                PACKAGE = IO::AIO
 
@@ -919,9 +1035,10 @@ BOOT:
   aio_stash     = gv_stashpv ("IO::AIO"     , 1);
   aio_req_stash = gv_stashpv ("IO::AIO::REQ", 1);
   aio_grp_stash = gv_stashpv ("IO::AIO::GRP", 1);
+  aio_wd_stash  = gv_stashpv ("IO::AIO::WD" , 1);
 
-  for (civ = const_iv + sizeof (const_iv) / sizeof (const_iv [0]); civ-- > const_iv; )
-    newCONSTSUB (aio_stash, (char *)civ->name, newSViv (civ->iv));
+  for (civ = const_iv + sizeof (const_iv) / sizeof (const_iv [0]); civ > const_iv; civ--)
+    newCONSTSUB (aio_stash, (char *)civ[-1].name, newSViv (civ[-1].iv));
 
   newCONSTSUB (aio_stash, "PAGESIZE", newSViv (PAGESIZE));
 
@@ -931,8 +1048,6 @@ BOOT:
 void
 reinit ()
 	PROTOTYPE:
-	CODE:
-	reinit ();
 
 void
 max_poll_reqs (unsigned int nreqs)
@@ -977,14 +1092,25 @@ max_outstanding (unsigned int maxreqs)
         max_outstanding = maxreqs;
 
 void
+aio_wd (SV8 *pathname, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+        dREQ;
+
+        req->type = EIO_WD_OPEN;
+        req_set_path1 (req, pathname);
+
+        REQ_SEND;
+}
+
+void
 aio_open (SV8 *pathname, int flags, int mode, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
         dREQ;
 
         req->type = EIO_OPEN;
-        req->sv1  = newSVsv (pathname);
-        req->ptr1 = SvPVbyte_nolen (req->sv1);
+        req_set_path1 (req, pathname);
         req->int1 = flags;
         req->int2 = mode;
 
@@ -996,6 +1122,7 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
         ALIAS:
            aio_fsync     = EIO_FSYNC
            aio_fdatasync = EIO_FDATASYNC
+           aio_syncfs    = EIO_SYNCFS
 	PPCODE:
 {
   	int fd = s_fileno_croak (fh, 0);
@@ -1130,7 +1257,7 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
 }
 
 void
-aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
+aio_readlink (SV8 *pathname, SV *callback=&PL_sv_undef)
         ALIAS:
            aio_readlink = EIO_READLINK
            aio_realpath = EIO_REALPATH
@@ -1139,8 +1266,7 @@ aio_readlink (SV8 *path, SV *callback=&PL_sv_undef)
         dREQ;
 
         req->type = ix;
-        req->sv1  = newSVsv (path);
-        req->ptr1 = SvPVbyte_nolen (req->sv1);
+        req_set_path1 (req, pathname);
 
         REQ_SEND;
 }
@@ -1190,18 +1316,7 @@ aio_stat (SV8 *fh_or_path, SV *callback=&PL_sv_undef)
 {
 	dREQ;
 
-        req->sv1 = newSVsv (fh_or_path);
-
-        if (SvPOK (req->sv1))
-          {
-            req->type = ix;
-            req->ptr1 = SvPVbyte_nolen (req->sv1);
-          }
-        else
-          {
-            req->type = ix == EIO_STATVFS ? EIO_FSTATVFS : EIO_FSTAT;
-            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
-          }
+        req_set_fh_or_path (req, ix, ix == EIO_STATVFS ? EIO_FSTATVFS : EIO_FSTAT, fh_or_path);
 
         REQ_SEND;
 }
@@ -1230,18 +1345,7 @@ aio_utime (SV8 *fh_or_path, SV *atime, SV *mtime, SV *callback=&PL_sv_undef)
 
         req->nv1 = SvOK (atime) ? SvNV (atime) : -1.;
         req->nv2 = SvOK (mtime) ? SvNV (mtime) : -1.;
-        req->sv1 = newSVsv (fh_or_path);
-
-        if (SvPOK (req->sv1))
-          {
-            req->type = EIO_UTIME;
-            req->ptr1 = SvPVbyte_nolen (req->sv1);
-          }
-        else
-          {
-            req->type = EIO_FUTIME;
-            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
-          }
+        req_set_fh_or_path (req, EIO_UTIME, EIO_FUTIME, fh_or_path);
 
         REQ_SEND;
 }
@@ -1252,45 +1356,20 @@ aio_truncate (SV8 *fh_or_path, SV *offset, SV *callback=&PL_sv_undef)
 {
 	dREQ;
 
-        req->sv1  = newSVsv (fh_or_path);
         req->offs = SvOK (offset) ? SvVAL64 (offset) : -1;
-
-        if (SvPOK (req->sv1))
-          {
-            req->type = EIO_TRUNCATE;
-            req->ptr1 = SvPVbyte_nolen (req->sv1);
-          }
-        else
-          {
-            req->type = EIO_FTRUNCATE;
-            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
-          }
+        req_set_fh_or_path (req, EIO_TRUNCATE, EIO_FTRUNCATE, fh_or_path);
 
         REQ_SEND;
 }
 
 void
 aio_chmod (SV8 *fh_or_path, int mode, SV *callback=&PL_sv_undef)
-	ALIAS:
-        aio_chmod  = EIO_CHMOD
-        aio_mkdir  = EIO_MKDIR
 	PPCODE:
 {
 	dREQ;
 
         req->int2 = mode;
-        req->sv1  = newSVsv (fh_or_path);
-
-        if (SvPOK (req->sv1))
-          {
-            req->type = ix;
-            req->ptr1 = SvPVbyte_nolen (req->sv1);
-          }
-        else
-          {
-            req->type = EIO_FCHMOD;
-            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
-          }
+        req_set_fh_or_path (req, EIO_CHMOD, EIO_FCHMOD, fh_or_path);
 
         REQ_SEND;
 }
@@ -1303,18 +1382,7 @@ aio_chown (SV8 *fh_or_path, SV *uid, SV *gid, SV *callback=&PL_sv_undef)
 
         req->int2 = SvOK (uid) ? SvIV (uid) : -1;
         req->int3 = SvOK (gid) ? SvIV (gid) : -1;
-        req->sv1  = newSVsv (fh_or_path);
-
-        if (SvPOK (req->sv1))
-          {
-            req->type = EIO_CHOWN;
-            req->ptr1 = SvPVbyte_nolen (req->sv1);
-          }
-        else
-          {
-            req->type = EIO_FCHOWN;
-            req->int1 = PerlIO_fileno (IoIFP (sv_2io (fh_or_path)));
-          }
+        req_set_fh_or_path (req, EIO_CHOWN, EIO_FCHOWN, fh_or_path);
 
         REQ_SEND;
 }
@@ -1326,14 +1394,27 @@ aio_readdirx (SV8 *pathname, IV flags, SV *callback=&PL_sv_undef)
 	dREQ;
 	
         req->type = EIO_READDIR;
-	req->sv1  = newSVsv (pathname);
-	req->ptr1 = SvPVbyte_nolen (req->sv1);
         req->int1 = flags | EIO_READDIR_DENTS | EIO_READDIR_CUSTOM1;
 
         if (flags & EIO_READDIR_DENTS)
           req->int1 |= EIO_READDIR_CUSTOM2;
 
+        req_set_path1 (req, pathname);
+
 	REQ_SEND;
+}
+
+void
+aio_mkdir (SV8 *pathname, int mode, SV *callback=&PL_sv_undef)
+	PPCODE:
+{
+	dREQ;
+
+        req->type = EIO_MKDIR;
+        req->int2 = mode;
+        req_set_path1 (req, pathname);
+
+        REQ_SEND;
 }
 
 void
@@ -1347,8 +1428,7 @@ aio_unlink (SV8 *pathname, SV *callback=&PL_sv_undef)
 	dREQ;
 	
         req->type = ix;
-	req->sv1  = newSVsv (pathname);
-	req->ptr1 = SvPVbyte_nolen (req->sv1);
+        req_set_path1 (req, pathname);
 
 	REQ_SEND;
 }
@@ -1362,12 +1442,12 @@ aio_link (SV8 *oldpath, SV8 *newpath, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
 	dREQ;
+        eio_wd wd2 = 0;
 	
         req->type = ix;
-	req->sv1  = newSVsv (oldpath);
-	req->ptr1 = SvPVbyte_nolen (req->sv1);
-	req->sv2  = newSVsv (newpath);
-	req->ptr2 = SvPVbyte_nolen (req->sv2);
+        req_set_path1 (req, oldpath);
+        req_set_path (req, newpath, &req->sv2, &req->sv4, &wd2, &req->ptr2);
+        req->int3 = (long)wd2;
 	
 	REQ_SEND;
 }
@@ -1379,10 +1459,9 @@ aio_mknod (SV8 *pathname, int mode, UV dev, SV *callback=&PL_sv_undef)
 	dREQ;
 	
         req->type = EIO_MKNOD;
-	req->sv1  = newSVsv (pathname);
-	req->ptr1 = SvPVbyte_nolen (req->sv1);
         req->int2 = (mode_t)mode;
         req->offs = dev;
+        req_set_path1 (req, pathname);
 	
 	REQ_SEND;
 }
@@ -1592,7 +1671,7 @@ fadvise (aio_rfd fh, off_t offset, off_t length, IV advice)
 	OUTPUT:
         RETVAL
 
-ssize_t
+IV
 sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
         CODE:
         RETVAL = eio_sendfile_sync (ofh, ifh, offset, count);
@@ -1713,6 +1792,34 @@ void _on_next_submit (SV *cb)
         on_next_submit = SvOK (cb) ? newSVsv (cb) : 0;
 
 PROTOTYPES: DISABLE
+
+MODULE = IO::AIO                PACKAGE = IO::AIO::WD
+
+BOOT:
+{
+  newCONSTSUB (aio_stash, "CWD"       , newSVaio_wd (EIO_CWD       ));
+  newCONSTSUB (aio_stash, "INVALID_WD", newSVaio_wd (EIO_INVALID_WD));
+}
+
+void
+DESTROY (SV *self)
+	CODE:
+{
+	aio_wd wd = SvAIO_WD (self);
+#if HAVE_AT
+        {
+          SV *callback = &PL_sv_undef;
+          dREQ; /* clobbers next_pri :/ */
+          next_pri = req->pri; /* restore next_pri */
+          req->pri = EIO_PRI_MAX; /* better use max. priority to conserve fds */
+          req->type = EIO_WD_CLOSE;
+          req->wd = wd;
+          REQ_SEND;
+        }
+#else
+        eio_wd_close_sync (wd);
+#endif
+}
 
 MODULE = IO::AIO                PACKAGE = IO::AIO::REQ
 

@@ -24,6 +24,9 @@
 /* posix_madvise(2) is available */
 #undef HAVE_POSIX_MADVISE
 
+/* prctl(PR_SET_NAME) is available */
+#undef HAVE_PRCTL_SET_NAME
+
 /* pread(2) and pwrite(2) are available */
 #undef HAVE_PREADWRITE
 
@@ -48,8 +51,17 @@
 /* sync_file_range(2) is available */
 #undef HAVE_SYNC_FILE_RANGE
 
+/* Define to 1 if you have the <sys/prctl.h> header file. */
+#undef HAVE_SYS_PRCTL_H
+
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #undef HAVE_SYS_STAT_H
+
+/* syscall(__NR_syncfs) is available */
+#undef HAVE_SYS_SYNCFS
+
+/* Define to 1 if you have the <sys/syscall.h> header file. */
+#undef HAVE_SYS_SYSCALL_H
 
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H

@@ -170,18 +170,19 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '4.0';
+   our $VERSION = '4.1';
 
    our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
-                     aio_scandir aio_symlink aio_readlink aio_realpath aio_sync aio_fsync
-                     aio_fdatasync aio_sync_file_range aio_fallocate
+                     aio_scandir aio_symlink aio_readlink aio_realpath aio_sync
+                     aio_fsync aio_syncfs aio_fdatasync aio_sync_file_range aio_fallocate
                      aio_pathsync aio_readahead
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate
                      aio_msync aio_mtouch aio_mlock aio_mlockall
-                     aio_statvfs);
+                     aio_statvfs
+                     aio_wd);
 
    our @EXPORT = (@AIO_REQ, qw(aioreq_pri aioreq_nice));
    our @EXPORT_OK = qw(poll_fileno poll_cb poll_wait flush
@@ -207,6 +208,7 @@ This section simply lists the prototypes of the most important functions
 for quick reference. See the following sections for function-by-function
 documentation.
 
+   aio_wd $pathname, $callback->($wd)
    aio_open $pathname, $flags, $mode, $callback->($fh)
    aio_close $fh, $callback->($status)
    aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
@@ -221,11 +223,11 @@ documentation.
    aio_truncate $fh_or_path, $offset, $callback->($status)
    aio_chmod $fh_or_path, $mode, $callback->($status)
    aio_unlink $pathname, $callback->($status)
-   aio_mknod $path, $mode, $dev, $callback->($status)
+   aio_mknod $pathname, $mode, $dev, $callback->($status)
    aio_link $srcpath, $dstpath, $callback->($status)
    aio_symlink $srcpath, $dstpath, $callback->($status)
-   aio_readlink $path, $callback->($link)
-   aio_realpath $path, $callback->($link)
+   aio_readlink $pathname, $callback->($link)
+   aio_realpath $pathname, $callback->($link)
    aio_rename $srcpath, $dstpath, $callback->($status)
    aio_mkdir $pathname, $mode, $callback->($status)
    aio_rmdir $pathname, $callback->($status)
@@ -233,16 +235,17 @@ documentation.
    aio_readdirx $pathname, $flags, $callback->($entries, $flags)
       IO::AIO::READDIR_DENTS IO::AIO::READDIR_DIRS_FIRST
       IO::AIO::READDIR_STAT_ORDER IO::AIO::READDIR_FOUND_UNKNOWN
-   aio_load $path, $data, $callback->($status)
+   aio_scandir $pathname, $maxreq, $callback->($dirs, $nondirs)
+   aio_load $pathname, $data, $callback->($status)
    aio_copy $srcpath, $dstpath, $callback->($status)
    aio_move $srcpath, $dstpath, $callback->($status)
-   aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
-   aio_rmtree $path, $callback->($status)
+   aio_rmtree $pathname, $callback->($status)
    aio_sync $callback->($status)
+   aio_syncfs $fh, $callback->($status)
    aio_fsync $fh, $callback->($status)
    aio_fdatasync $fh, $callback->($status)
    aio_sync_file_range $fh, $offset, $nbytes, $flags, $callback->($status)
-   aio_pathsync $path, $callback->($status)
+   aio_pathsync $pathname, $callback->($status)
    aio_msync $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
    aio_mtouch $scalar, $offset = 0, $length = undef, flags = 0, $callback->($status)
    aio_mlock $scalar, $offset = 0, $length = undef, $callback->($status)
@@ -280,10 +283,15 @@ documentation.
 All the C<aio_*> calls are more or less thin wrappers around the syscall
 with the same name (sans C<aio_>). The arguments are similar or identical,
 and they all accept an additional (and optional) C<$callback> argument
-which must be a code reference. This code reference will get called with
-the syscall return code (e.g. most syscalls return C<-1> on error, unlike
-perl, which usually delivers "false") as its sole argument after the given
-syscall has been executed asynchronously.
+which must be a code reference. This code reference will be called after
+the syscall has been executed in an asynchronous fashion. The results
+of the request will be passed as arguments to the callback (and, if an
+error occured, in C<$!>) - for most requests the syscall return code (e.g.
+most syscalls return C<-1> on error, unlike perl, which usually delivers
+"false").
+
+Some requests (such as C<aio_readdir>) pass the actual results and
+communicate failures by passing C<undef>.
 
 All functions expecting a filehandle keep a copy of the filehandle
 internally until the request has finished.
@@ -291,19 +299,22 @@ internally until the request has finished.
 All functions return request objects of type L<IO::AIO::REQ> that allow
 further manipulation of those requests while they are in-flight.
 
-The pathnames you pass to these routines I<must> be absolute and
-encoded as octets. The reason for the former is that at the time the
-request is being executed, the current working directory could have
-changed. Alternatively, you can make sure that you never change the
-current working directory anywhere in the program and then use relative
-paths.
+The pathnames you pass to these routines I<should> be absolute. The
+reason for this is that at the time the request is being executed, the
+current working directory could have changed. Alternatively, you can
+make sure that you never change the current working directory anywhere
+in the program and then use relative paths. You can also take advantage
+of IO::AIOs working directory abstraction, that lets you specify paths
+relative to some previously-opened "working directory object" - see the
+description of the C<IO::AIO::WD> class later in this document.
 
 To encode pathnames as octets, either make sure you either: a) always pass
 in filenames you got from outside (command line, readdir etc.) without
-tinkering, b) are ASCII or ISO 8859-1, c) use the Encode module and encode
-your pathnames to the locale (or other) encoding in effect in the user
-environment, d) use Glib::filename_from_unicode on unicode filenames or e)
-use something else to ensure your scalar has the correct contents.
+tinkering, b) are in your native filesystem encoding, c) use the Encode
+module and encode your pathnames to the locale (or other) encoding in
+effect in the user environment, d) use Glib::filename_from_unicode on
+unicode filenames or e) use something else to ensure your scalar has the
+correct contents.
 
 This works, btw. independent of the internal UTF-8 bit, which IO::AIO
 handles correctly whether it is set or not.
@@ -615,7 +626,7 @@ Asynchronously unlink (delete) a file and call the callback with the
 result code.
 
 
-=item aio_mknod $path, $mode, $dev, $callback->($status)
+=item aio_mknod $pathname, $mode, $dev, $callback->($status)
 
 [EXPERIMENTAL]
 
@@ -623,7 +634,7 @@ Asynchronously create a device node (or fifo). See mknod(2).
 
 The only (POSIX-) portable way of calling this function is:
 
-   aio_mknod $path, IO::AIO::S_IFIFO | $mode, 0, sub { ...
+   aio_mknod $pathname, IO::AIO::S_IFIFO | $mode, 0, sub { ...
 
 See C<aio_stat> for info about some potentially helpful extra constants
 and functions.
@@ -640,14 +651,14 @@ Asynchronously create a new symbolic link to the existing object at C<$srcpath> 
 the path C<$dstpath> and call the callback with the result code.
 
 
-=item aio_readlink $path, $callback->($link)
+=item aio_readlink $pathname, $callback->($link)
 
 Asynchronously read the symlink specified by C<$path> and pass it to
 the callback. If an error occurs, nothing or undef gets passed to the
 callback.
 
 
-=item aio_realpath $path, $callback->($path)
+=item aio_realpath $pathname, $callback->($path)
 
 Asynchronously make the path absolute and resolve any symlinks in
 C<$path>. The resulting path only consists of directories (Same as
@@ -688,8 +699,8 @@ array-ref with the filenames.
 
 =item aio_readdirx $pathname, $flags, $callback->($entries, $flags)
 
-Quite similar to C<aio_readdir>, but the C<$flags> argument allows to tune
-behaviour and output format. In case of an error, C<$entries> will be
+Quite similar to C<aio_readdir>, but the C<$flags> argument allows one to
+tune behaviour and output format. In case of an error, C<$entries> will be
 C<undef>.
 
 The flags are a combination of the following constants, ORed together (the
@@ -746,13 +757,13 @@ the likely dirs come first, resulting in a less optimal stat order.
 
 This flag should not be set when calling C<aio_readdirx>. Instead, it
 is being set by C<aio_readdirx>, when any of the C<$type>'s found were
-C<IO::AIO::DT_UNKNOWN>. The absense of this flag therefore indicates that all
+C<IO::AIO::DT_UNKNOWN>. The absence of this flag therefore indicates that all
 C<$type>'s are known, which can be used to speed up some algorithms.
 
 =back
 
 
-=item aio_load $path, $data, $callback->($status)
+=item aio_load $pathname, $data, $callback->($status)
 
 This is a composite request that tries to fully load the given file into
 memory. Status is the same as with aio_read.
@@ -897,7 +908,7 @@ sub aio_move($$;$) {
    $grp
 }
 
-=item aio_scandir $path, $maxreq, $callback->($dirs, $nondirs)
+=item aio_scandir $pathname, $maxreq, $callback->($dirs, $nondirs)
 
 Scans a directory (similar to C<aio_readdir>) but additionally tries to
 efficiently separate the entries of directory C<$path> into two sets of
@@ -938,7 +949,7 @@ currently) and likely non-directories (see C<aio_readdirx>). Then every
 entry plus an appended C</.> will be C<stat>'ed, likely directories first,
 in order of their inode numbers. If that succeeds, it assumes that the
 entry is a directory or a symlink to directory (which will be checked
-seperately). This is often faster than stat'ing the entry itself because
+separately). This is often faster than stat'ing the entry itself because
 filesystems might detect the type of the entry without reading the inode
 data (e.g. ext2fs filetype feature), even on systems that cannot return
 the filetype information on readdir.
@@ -964,67 +975,78 @@ sub aio_scandir($$;$) {
 
    $maxreq = 4 if $maxreq <= 0;
 
-   # stat once
+   # get a wd object
    aioreq_pri $pri;
-   add $grp aio_stat $path, sub {
-      return $grp->result () if $_[0];
-      my $now = time;
-      my $hash1 = join ":", (stat _)[0,1,3,7,9];
+   add $grp aio_wd $path, sub {
+      $_[0]
+         or return $grp->result ();
 
-      # read the directory entries
+      my $wd = [shift, "."];
+
+      # stat once
       aioreq_pri $pri;
-      add $grp aio_readdirx $path, READDIR_DIRS_FIRST, sub {
-         my $entries = shift
-            or return $grp->result ();
+      add $grp aio_stat $wd, sub {
+         return $grp->result () if $_[0];
+         my $now = time;
+         my $hash1 = join ":", (stat _)[0,1,3,7,9];
 
-         # stat the dir another time
+         # read the directory entries
          aioreq_pri $pri;
-         add $grp aio_stat $path, sub {
-            my $hash2 = join ":", (stat _)[0,1,3,7,9];
+         add $grp aio_readdirx $wd, READDIR_DIRS_FIRST, sub {
+            my $entries = shift
+               or return $grp->result ();
 
-            my $ndirs;
+            # stat the dir another time
+            aioreq_pri $pri;
+            add $grp aio_stat $wd, sub {
+               my $hash2 = join ":", (stat _)[0,1,3,7,9];
 
-            # take the slow route if anything looks fishy
-            if ($hash1 ne $hash2 or (stat _)[9] == $now) {
-               $ndirs = -1;
-            } else {
-               # if nlink == 2, we are finished
-               # for non-posix-fs's, we rely on nlink < 2
-               $ndirs = (stat _)[3] - 2
-                  or return $grp->result ([], $entries);
-            }
+               my $ndirs;
 
-            my (@dirs, @nondirs);
+               # take the slow route if anything looks fishy
+               if ($hash1 ne $hash2 or (stat _)[9] == $now) {
+                  $ndirs = -1;
+               } else {
+                  # if nlink == 2, we are finished
+                  # for non-posix-fs's, we rely on nlink < 2
+                  $ndirs = (stat _)[3] - 2
+                     or return $grp->result ([], $entries);
+               }
 
-            my $statgrp = add $grp aio_group sub {
-               $grp->result (\@dirs, \@nondirs);
-            };
+               my (@dirs, @nondirs);
 
-            limit $statgrp $maxreq;
-            feed $statgrp sub {
-               return unless @$entries;
-               my $entry = shift @$entries;
+               my $statgrp = add $grp aio_group sub {
+                  $grp->result (\@dirs, \@nondirs);
+               };
 
-               aioreq_pri $pri;
-               add $statgrp aio_stat "$path/$entry/.", sub {
-                  if ($_[0] < 0) {
-                     push @nondirs, $entry;
-                  } else {
-                     # need to check for real directory
-                     aioreq_pri $pri;
-                     add $statgrp aio_lstat "$path/$entry", sub {
-                        if (-d _) {
-                           push @dirs, $entry;
+               limit $statgrp $maxreq;
+               feed $statgrp sub {
+                  return unless @$entries;
+                  my $entry = shift @$entries;
 
-                           unless (--$ndirs) {
-                              push @nondirs, @$entries;
-                              feed $statgrp;
+                  aioreq_pri $pri;
+                  $wd->[1] = "$entry/.";
+                  add $statgrp aio_stat $wd, sub {
+                     if ($_[0] < 0) {
+                        push @nondirs, $entry;
+                     } else {
+                        # need to check for real directory
+                        aioreq_pri $pri;
+                        $wd->[1] = $entry;
+                        add $statgrp aio_lstat $wd, sub {
+                           if (-d _) {
+                              push @dirs, $entry;
+
+                              unless (--$ndirs) {
+                                 push @nondirs, @$entries;
+                                 feed $statgrp;
+                              }
+                           } else {
+                              push @nondirs, $entry;
                            }
-                        } else {
-                           push @nondirs, $entry;
                         }
                      }
-                  }
+                  };
                };
             };
          };
@@ -1034,7 +1056,7 @@ sub aio_scandir($$;$) {
    $grp
 }
 
-=item aio_rmtree $path, $callback->($status)
+=item aio_rmtree $pathname, $callback->($status)
 
 Delete a directory tree starting (and including) C<$path>, return the
 status of the final C<rmdir> only.  This is a composite request that
@@ -1086,6 +1108,13 @@ callback with the fdatasync result code.
 If this call isn't available because your OS lacks it or it couldn't be
 detected, it will be emulated by calling C<fsync> instead.
 
+=item aio_syncfs $fh, $callback->($status)
+
+Asynchronously call the syncfs syscall to sync the filesystem associated
+to the given filehandle and call the callback with the syncfs result
+code. If syncfs is not available, calls sync(), but returns C<-1> and sets
+errno to C<ENOSYS> nevertheless.
+
 =item aio_sync_file_range $fh, $offset, $nbytes, $flags, $callback->($status)
 
 Sync the data portion of the file specified by C<$offset> and C<$length>
@@ -1098,7 +1127,7 @@ C<IO::AIO::SYNC_FILE_RANGE_WRITE> and
 C<IO::AIO::SYNC_FILE_RANGE_WAIT_AFTER>: refer to the sync_file_range
 manpage for details.
 
-=item aio_pathsync $path, $callback->($status)
+=item aio_pathsync $pathname, $callback->($status)
 
 This request tries to open, fsync and close the given path. This is a
 composite request intended to sync directories after directory operations
@@ -1251,6 +1280,125 @@ except to put your application under artificial I/O pressure.
 
 =back
 
+
+=head2 IO::AIO::WD - multiple working directories
+
+Your process only has one current working directory, which is used by all
+threads. This makes it hard to use relative paths (some other component
+could call C<chdir> at any time, and it is hard to control when the path
+will be used by IO::AIO).
+
+One solution for this is to always use absolute paths. This usually works,
+but can be quite slow (the kernel has to walk the whole path on every
+access), and can also be a hassle to implement.
+
+Newer POSIX systems have a number of functions (openat, fdopendir,
+futimensat and so on) that make it possible to specify working directories
+per operation.
+
+For portability, and because the clowns who "designed", or shall I write,
+perpetrated this new interface were obviously half-drunk, this abstraction
+cannot be perfect, though.
+
+IO::AIO allows you to convert directory paths into a so-called IO::AIO::WD
+object. This object stores the canonicalised, absolute version of the
+path, and on systems that allow it, also a directory file descriptor.
+
+Everywhere where a pathname is accepted by IO::AIO (e.g. in C<aio_stat>
+or C<aio_unlink>), one can specify an array reference with an IO::AIO::WD
+object and a pathname instead (or the IO::AIO::WD object alone, which
+gets interpreted as C<[$wd, "."]>). If the pathname is absolute, the
+IO::AIO::WD object is ignored, otherwise the pathname is resolved relative
+to that IO::AIO::WD object.
+
+For example, to get a wd object for F</etc> and then stat F<passwd>
+inside, you would write:
+
+   aio_wd "/etc", sub {
+      my $etcdir = shift;
+
+      # although $etcdir can be undef on error, there is generally no reason
+      # to check for errors here, as aio_stat will fail with ENOENT
+      # when $etcdir is undef.
+
+      aio_stat [$etcdir, "passwd"], sub {
+         # yay
+      };
+   };
+
+That C<aio_wd> is a request and not a normal function shows that creating
+an IO::AIO::WD object is itself a potentially blocking operation, which is
+why it is done asynchronously.
+
+To stat the directory obtained with C<aio_wd> above, one could write
+either of the following three request calls:
+
+   aio_lstat "/etc"    , sub { ...  # pathname as normal string
+   aio_lstat [$wd, "."], sub { ...  # "." relative to $wd (i.e. $wd itself)
+   aio_lstat $wd       , sub { ...  # shorthand for the previous
+
+As with normal pathnames, IO::AIO keeps a copy of the working directory
+object and the pathname string, so you could write the following without
+causing any issues due to C<$path> getting reused:
+
+   my $path = [$wd, undef];
+
+   for my $name (qw(abc def ghi)) {
+      $path->[1] = $name;
+      aio_stat $path, sub {
+         # ...
+      };
+   }
+
+There are some caveats: when directories get renamed (or deleted), the
+pathname string doesn't change, so will point to the new directory (or
+nowhere at all), while the directory fd, if available on the system,
+will still point to the original directory. Most functions accepting a
+pathname will use the directory fd on newer systems, and the string on
+older systems. Some functions (such as realpath) will always rely on the
+string form of the pathname.
+
+So this fucntionality is mainly useful to get some protection against
+C<chdir>, to easily get an absolute path out of a relative path for future
+reference, and to speed up doing many operations in the same directory
+(e.g. when stat'ing all files in a directory).
+
+The following functions implement this working directory abstraction:
+
+=over 4
+
+=item aio_wd $pathname, $callback->($wd)
+
+Asynchonously canonicalise the given pathname and convert it to an
+IO::AIO::WD object representing it. If possible and supported on the
+system, also open a directory fd to speed up pathname resolution relative
+to this working directory.
+
+If something goes wrong, then C<undef> is passwd to the callback instead
+of a working directory object and C<$!> is set appropriately. Since
+passing C<undef> as working directory component of a pathname fails the
+request with C<ENOENT>, there is often no need for error checking in the
+C<aio_wd> callback, as future requests using the value will fail in the
+expected way.
+
+If this call isn't available because your OS lacks it or it couldn't be
+detected, it will be emulated by calling C<fsync> instead.
+
+=item IO::AIO::CWD
+
+This is a compiletime constant (object) that represents the process
+current working directory.
+
+Specifying this object as working directory object for a pathname is as
+if the pathname would be specified directly, without a directory object,
+e.g., these calls are functionally identical:
+
+   aio_stat "somefile", sub { ... };
+   aio_stat [IO::AIO::CWD, "somefile"], sub { ... };
+
+=back
+
+
 =head2 IO::AIO::REQ CLASS
 
 All non-aggregate C<aio_*> functions return an object of this class when
@@ -1377,8 +1525,8 @@ Sets a feeder/generator on this group: every group can have an attached
 generator that generates requests if idle. The idea behind this is that,
 although you could just queue as many requests as you want in a group,
 this might starve other requests for a potentially long time. For example,
-C<aio_scandir> might generate hundreds of thousands C<aio_stat> requests,
-delaying any later requests for a long time.
+C<aio_scandir> might generate hundreds of thousands of C<aio_stat>
+requests, delaying any later requests for a long time.
 
 To avoid this, and allow incremental generation of requests, you can
 instead a group and set a feeder on it that generates those requests. The
@@ -1667,7 +1815,7 @@ Returns the number of bytes copied, or C<-1> on error.
 
 Simply calls the C<posix_fadvise> function (see its
 manpage for details). The following advice constants are
-avaiable: C<IO::AIO::FADV_NORMAL>, C<IO::AIO::FADV_SEQUENTIAL>,
+available: C<IO::AIO::FADV_NORMAL>, C<IO::AIO::FADV_SEQUENTIAL>,
 C<IO::AIO::FADV_RANDOM>, C<IO::AIO::FADV_NOREUSE>,
 C<IO::AIO::FADV_WILLNEED>, C<IO::AIO::FADV_DONTNEED>.
 
@@ -1678,7 +1826,7 @@ ENOSYS, otherwise the return value of C<posix_fadvise>.
 
 Simply calls the C<posix_madvise> function (see its
 manpage for details). The following advice constants are
-avaiable: C<IO::AIO::MADV_NORMAL>, C<IO::AIO::MADV_SEQUENTIAL>,
+available: C<IO::AIO::MADV_NORMAL>, C<IO::AIO::MADV_SEQUENTIAL>,
 C<IO::AIO::MADV_RANDOM>, C<IO::AIO::MADV_WILLNEED>, C<IO::AIO::MADV_DONTNEED>.
 
 On systems that do not implement C<posix_madvise>, this function returns
@@ -1688,7 +1836,7 @@ ENOSYS, otherwise the return value of C<posix_madvise>.
 
 Simply calls the C<mprotect> function on the preferably AIO::mmap'ed
 $scalar (see its manpage for details). The following protect
-constants are avaiable: C<IO::AIO::PROT_NONE>, C<IO::AIO::PROT_READ>,
+constants are available: C<IO::AIO::PROT_NONE>, C<IO::AIO::PROT_READ>,
 C<IO::AIO::PROT_WRITE>, C<IO::AIO::PROT_EXEC>.
 
 On systems that do not implement C<mprotect>, this function returns
@@ -1823,8 +1971,8 @@ child:
 
 =item IO::AIO::reinit
 
-Abondons all current requests and I/O threads and simply reinitialises all
-data structures. This is not an operation suppported by any standards, but
+Abandons all current requests and I/O threads and simply reinitialises all
+data structures. This is not an operation supported by any standards, but
 happens to work on GNU/Linux and some newer BSD systems.
 
 The only reasonable use for this function is to call it after forking, if
