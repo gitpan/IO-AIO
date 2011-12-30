@@ -1441,8 +1441,8 @@ aio_link (SV8 *oldpath, SV8 *newpath, SV *callback=&PL_sv_undef)
            aio_rename  = EIO_RENAME
 	PPCODE:
 {
-	dREQ;
         eio_wd wd2 = 0;
+	dREQ;
 	
         req->type = ix;
         req_set_path1 (req, oldpath);

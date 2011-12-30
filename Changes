@@ -9,6 +9,11 @@ TODO: aio_mincore?
 TODO: getxattr etc.?
 TODO: F_DUPFD_CLOEXEC
 
+4.12 Fri Dec 30 08:51:25 CET 2011
+	- realpath would return a random value if the name was too long,
+          instead of -1.
+        - port to c89.
+
 4.11 Mon Oct 10 00:24:11 CEST 2011
 	- libeio didn't compile on !linux (Paul Howarth).
 
