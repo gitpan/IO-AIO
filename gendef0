@@ -1,0 +1,15 @@
+#!/usr/bin/perl
+
+open STDIN, "<AIO.xs"
+   or die "AIO.xs: $!";
+
+open STDOUT, ">def0.h"
+   or die "def0.h: $!";
+
+while (<>) {
+   if (/^\s*const_iv\s*\((\S+)\)\s*$/ || /^\s*const_niv\s*\([^,]+,\s*(\S+)\)\s*$/) {
+      print "#ifndef $1\n",
+            "#define $1 0\n",
+            "#endif\n";
+   }
+}

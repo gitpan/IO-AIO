@@ -155,6 +155,7 @@ FUNCTIONS
        aio_wd $pathname, $callback->($wd)
        aio_open $pathname, $flags, $mode, $callback->($fh)
        aio_close $fh, $callback->($status)
+       aio_seek  $fh,$offset,$whence, $callback->($offs)
        aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
        aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
        aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
@@ -164,8 +165,8 @@ FUNCTIONS
        aio_statvfs $fh_or_path, $callback->($statvfs)
        aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
        aio_chown $fh_or_path, $uid, $gid, $callback->($status)
-       aio_truncate $fh_or_path, $offset, $callback->($status)
        aio_chmod $fh_or_path, $mode, $callback->($status)
+       aio_truncate $fh_or_path, $offset, $callback->($status)
        aio_unlink $pathname, $callback->($status)
        aio_mknod $pathname, $mode, $dev, $callback->($status)
        aio_link $srcpath, $dstpath, $callback->($status)
@@ -222,7 +223,7 @@ FUNCTIONS
        IO::AIO::munlock $scalar, $offset = 0, $length = undef
        IO::AIO::munlockall
 
-  AIO REQUEST FUNCTIONS
+  API NOTES
     All the "aio_*" calls are more or less thin wrappers around the syscall
     with the same name (sans "aio_"). The arguments are similar or
     identical, and they all accept an additional (and optional) $callback
@@ -262,6 +263,7 @@ FUNCTIONS
     This works, btw. independent of the internal UTF-8 bit, which IO::AIO
     handles correctly whether it is set or not.
 
+  AIO REQUEST FUNCTIONS
     $prev_pri = aioreq_pri [$pri]
         Returns the priority value that would be used for the next request
         and, if $pri is given, sets the priority for the next aio request.
@@ -342,6 +344,19 @@ FUNCTIONS
 
         Or in other words: the file descriptor will be closed, but it will
         not be free for reuse until the perl filehandle is closed.
+
+    aio_seek $fh, $offset, $whence, $callback->($offs)
+        Seeks the filehandle to the new $offset, similarly to perl's
+        "sysseek". The $whence can use the traditional values (0 for
+        "IO::AIO::SEEK_SET", 1 for "IO::AIO::SEEK_CUR" or 2 for
+        "IO::AIO::SEEK_END").
+
+        The resulting absolute offset will be passed to the callback, or -1
+        in case of an error.
+
+        In theory, the $whence constants could be different than the
+        corresponding values from Fcntl, but perl guarantees they are the
+        same, so don't panic.
 
     aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
     aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
@@ -864,6 +879,47 @@ FUNCTIONS
         memory.
 
            aio_mlockall IO::AIO::MCL_FUTURE;
+
+    aio_fiemap $fh, $start, $length, $flags, $count, $cb->(\@extents)
+        Queries the extents of the given file (by calling the Linux FIEMAP
+        ioctl, see <http://cvs.schmorp.de/IO-AIO/doc/fiemap.txt> for
+        details). If the "ioctl" is not available on your OS, then this
+        rquiest will fail with "ENOSYS".
+
+        $start is the starting offset to query extents for, $length is the
+        size of the range to query - if it is "undef", then the whole file
+        will be queried.
+
+        $flags is a combination of flags ("IO::AIO::FIEMAP_FLAG_SYNC" or
+        "IO::AIO::FIEMAP_FLAG_XATTR" - "IO::AIO::FIEMAP_FLAGS_COMPAT" is
+        also exported), and is normally 0 or "IO::AIO::FIEMAP_FLAG_SYNC" to
+        query the data portion.
+
+        $count is the maximum number of extent records to return. If it is
+        "undef", then IO::AIO queries all extents of the file. As a very
+        special case, if it is 0, then the callback receives the number of
+        extents instead of the extents themselves.
+
+        If an error occurs, the callback receives no arguments. The special
+        "errno" value "IO::AIO::EBADR" is available to test for flag errors.
+
+        Otherwise, the callback receives an array reference with extent
+        structures. Each extent structure is an array reference itself, with
+        the following members:
+
+           [$logical, $physical, $length, $flags]
+
+        Flags is any combination of the following flag values (typically
+        either 0 or "IO::AIO::FIEMAP_EXTENT_LAST"):
+
+        "IO::AIO::FIEMAP_EXTENT_LAST", "IO::AIO::FIEMAP_EXTENT_UNKNOWN",
+        "IO::AIO::FIEMAP_EXTENT_DELALLOC", "IO::AIO::FIEMAP_EXTENT_ENCODED",
+        "IO::AIO::FIEMAP_EXTENT_DATA_ENCRYPTED",
+        "IO::AIO::FIEMAP_EXTENT_NOT_ALIGNED",
+        "IO::AIO::FIEMAP_EXTENT_DATA_INLINE",
+        "IO::AIO::FIEMAP_EXTENT_DATA_TAIL",
+        "IO::AIO::FIEMAP_EXTENT_UNWRITTEN", "IO::AIO::FIEMAP_EXTENT_MERGED"
+        or "IO::AIO::FIEMAP_EXTENT_SHARED".
 
     aio_group $callback->(...)
         This is a very special aio request: Instead of doing something, it

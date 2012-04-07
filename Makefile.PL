@@ -93,9 +93,9 @@ my $mm = MM->new({
        PREOP	=> 'pod2text AIO.pm | tee README >$(DISTVNAME)/README; chmod -R u=rwX,go=rX . ;',
        COMPRESS	=> 'gzip -9v',
        SUFFIX	=> '.gz',
-	            },
+    },
     depend => {
-       "AIO.c" => "libeio/eio.h libeio/xthread.h libeio/eio.c libeio/config.h",
+       "AIO.c" => "schmorp.h libeio/eio.h libeio/xthread.h libeio/eio.c libeio/config.h",
     },
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
@@ -103,8 +103,8 @@ my $mm = MM->new({
     LIBS         => $LIBS,
     EXE_FILES    => ["bin/treescan"],
     PM           => {
-    		    'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
-                    },
+       'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
+    },
     PREREQ_PM => {
        "common::sense" => 0,
     },

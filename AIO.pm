@@ -170,13 +170,13 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '4.12';
+   our $VERSION = '4.14';
 
-   our @AIO_REQ = qw(aio_sendfile aio_read aio_write aio_open aio_close
+   our @AIO_REQ = qw(aio_sendfile aio_seek aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
                      aio_scandir aio_symlink aio_readlink aio_realpath aio_sync
                      aio_fsync aio_syncfs aio_fdatasync aio_sync_file_range aio_fallocate
-                     aio_pathsync aio_readahead
+                     aio_pathsync aio_readahead aio_fiemap
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
                      aio_chmod aio_utime aio_truncate
@@ -211,6 +211,7 @@ documentation.
    aio_wd $pathname, $callback->($wd)
    aio_open $pathname, $flags, $mode, $callback->($fh)
    aio_close $fh, $callback->($status)
+   aio_seek  $fh,$offset,$whence, $callback->($offs)
    aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
    aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
    aio_sendfile $out_fh, $in_fh, $in_offset, $length, $callback->($retval)
@@ -220,8 +221,8 @@ documentation.
    aio_statvfs $fh_or_path, $callback->($statvfs)
    aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
    aio_chown $fh_or_path, $uid, $gid, $callback->($status)
-   aio_truncate $fh_or_path, $offset, $callback->($status)
    aio_chmod $fh_or_path, $mode, $callback->($status)
+   aio_truncate $fh_or_path, $offset, $callback->($status)
    aio_unlink $pathname, $callback->($status)
    aio_mknod $pathname, $mode, $dev, $callback->($status)
    aio_link $srcpath, $dstpath, $callback->($status)
@@ -278,7 +279,7 @@ documentation.
    IO::AIO::munlock $scalar, $offset = 0, $length = undef
    IO::AIO::munlockall
 
-=head2 AIO REQUEST FUNCTIONS
+=head2 API NOTES
 
 All the C<aio_*> calls are more or less thin wrappers around the syscall
 with the same name (sans C<aio_>). The arguments are similar or identical,
@@ -318,6 +319,8 @@ correct contents.
 
 This works, btw. independent of the internal UTF-8 bit, which IO::AIO
 handles correctly whether it is set or not.
+
+=head2 AIO REQUEST FUNCTIONS
 
 =over 4
 
@@ -409,6 +412,20 @@ Or in other words: the file descriptor will be closed, but it will not be
 free for reuse until the perl filehandle is closed.
 
 =cut
+
+=item aio_seek $fh, $offset, $whence, $callback->($offs)
+
+Seeks the filehandle to the new C<$offset>, similarly to perl's
+C<sysseek>. The C<$whence> can use the traditional values (C<0> for
+C<IO::AIO::SEEK_SET>, C<1> for C<IO::AIO::SEEK_CUR> or C<2> for
+C<IO::AIO::SEEK_END>).
+
+The resulting absolute offset will be passed to the callback, or C<-1> in
+case of an error.
+
+In theory, the C<$whence> constants could be different than the
+corresponding values from L<Fcntl>, but perl guarantees they are the same,
+so don't panic.
 
 =item aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
@@ -1233,6 +1250,46 @@ documented under L<MISCELLANEOUS FUNCTIONS>.
 Example: asynchronously lock all current and future pages into memory.
 
    aio_mlockall IO::AIO::MCL_FUTURE;
+
+=item aio_fiemap $fh, $start, $length, $flags, $count, $cb->(\@extents)
+
+Queries the extents of the given file (by calling the Linux FIEMAP ioctl,
+see L<http://cvs.schmorp.de/IO-AIO/doc/fiemap.txt> for details). If the
+C<ioctl> is not available on your OS, then this rquiest will fail with
+C<ENOSYS>.
+
+C<$start> is the starting offset to query extents for, C<$length> is the
+size of the range to query - if it is C<undef>, then the whole file will
+be queried.
+
+C<$flags> is a combination of flags (C<IO::AIO::FIEMAP_FLAG_SYNC> or
+C<IO::AIO::FIEMAP_FLAG_XATTR> - C<IO::AIO::FIEMAP_FLAGS_COMPAT> is also
+exported), and is normally C<0> or C<IO::AIO::FIEMAP_FLAG_SYNC> to query
+the data portion.
+
+C<$count> is the maximum number of extent records to return. If it is
+C<undef>, then IO::AIO queries all extents of the file. As a very special
+case, if it is C<0>, then the callback receives the number of extents
+instead of the extents themselves.
+
+If an error occurs, the callback receives no arguments. The special
+C<errno> value C<IO::AIO::EBADR> is available to test for flag errors.
+
+Otherwise, the callback receives an array reference with extent
+structures. Each extent structure is an array reference itself, with the
+following members:
+
+   [$logical, $physical, $length, $flags]
+
+Flags is any combination of the following flag values (typically either C<0>
+or C<IO::AIO::FIEMAP_EXTENT_LAST>):
+
+C<IO::AIO::FIEMAP_EXTENT_LAST>, C<IO::AIO::FIEMAP_EXTENT_UNKNOWN>,
+C<IO::AIO::FIEMAP_EXTENT_DELALLOC>, C<IO::AIO::FIEMAP_EXTENT_ENCODED>,
+C<IO::AIO::FIEMAP_EXTENT_DATA_ENCRYPTED>, C<IO::AIO::FIEMAP_EXTENT_NOT_ALIGNED>,
+C<IO::AIO::FIEMAP_EXTENT_DATA_INLINE>, C<IO::AIO::FIEMAP_EXTENT_DATA_TAIL>,
+C<IO::AIO::FIEMAP_EXTENT_UNWRITTEN>, C<IO::AIO::FIEMAP_EXTENT_MERGED> or
+C<IO::AIO::FIEMAP_EXTENT_SHARED>.
 
 =item aio_group $callback->(...)
 

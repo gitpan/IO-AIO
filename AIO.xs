@@ -21,6 +21,14 @@
 # include <sys/mman.h>
 #endif
 
+#if __linux__
+# include <linux/fs.h>
+# ifdef FS_IOC_FIEMAP
+#  include <linux/fiemap.h>
+#  define HAVE_FIEMAP 1
+# endif
+#endif
+
 /* perl namespace pollution */
 #undef VERSION
 
@@ -64,6 +72,9 @@
   #undef abort
   #undef pipe
 
+  #define EIO_STRUCT_STAT struct _stati64
+  #define EIO_STRUCT_STATI64
+
 #else
 
   #include <sys/time.h>
@@ -72,19 +83,8 @@
   #include <utime.h>
   #include <signal.h>
 
-#endif
+  #define EIO_STRUCT_STAT Stat_t
 
-#define EIO_STRUCT_STAT Stat_t
-
-/* use NV for 32 bit perls as it allows larger offsets */
-#if IVSIZE >= 8
-# define VAL64 IV
-# define SvVAL64 SvIV
-# define newSVval64 newSViv
-#else
-# define VAL64 NV
-# define SvVAL64 SvNV
-# define newSVval64 newSVnv
 #endif
 
 /*****************************************************************************/
@@ -125,168 +125,12 @@ static void req_destroy  (eio_req *grp);
 
 #include "libeio/eio.c"
 
-/* Linux/others */
-#ifndef O_ASYNC
-# define O_ASYNC 0
-#endif
-#ifndef O_DIRECT
-# define O_DIRECT 0
-#endif
-#ifndef O_NOATIME
-# define O_NOATIME 0
-#endif
-
-/* POSIX */
-#ifndef O_CLOEXEC
-# define O_CLOEXEC 0
-#endif
-#ifndef O_NOFOLLOW
-# define O_NOFOLLOW 0
-#endif
-#ifndef O_NOCTTY
-# define O_NOCTTY 0
-#endif
-#ifndef O_NONBLOCK
-# define O_NONBLOCK 0
-#endif
-#ifndef O_EXEC
-# define O_EXEC 0
-#endif
-#ifndef O_SEARCH
-# define O_SEARCH 0
-#endif
-#ifndef O_DIRECTORY
-# define O_DIRECTORY 0
-#endif
-#ifndef O_DSYNC
-# define O_DSYNC 0
-#endif
-#ifndef O_RSYNC
-# define O_RSYNC 0
-#endif
-#ifndef O_SYNC
-# define O_SYNC 0
-#endif
-#ifndef O_TTY_INIT
-# define O_TTY_INIT 0
-#endif
-
-#ifndef POSIX_FADV_NORMAL
-# define POSIX_FADV_NORMAL 0
-#endif
-#ifndef POSIX_FADV_SEQUENTIAL
-# define POSIX_FADV_SEQUENTIAL 0
-#endif
-#ifndef POSIX_FADV_RANDOM
-# define POSIX_FADV_RANDOM 0
-#endif
-#ifndef POSIX_FADV_NOREUSE
-# define POSIX_FADV_NOREUSE 0
-#endif
-#ifndef POSIX_FADV_WILLNEED
-# define POSIX_FADV_WILLNEED 0
-#endif
-#ifndef POSIX_FADV_DONTNEED
-# define POSIX_FADV_DONTNEED 0
-#endif
-
 #if !HAVE_POSIX_FADVISE
 # define posix_fadvise(a,b,c,d) errno = ENOSYS /* also return ENOSYS */
 #endif
 
-#ifndef POSIX_MADV_NORMAL
-# define POSIX_MADV_NORMAL 0
-#endif
-#ifndef POSIX_MADV_SEQUENTIAL
-# define POSIX_MADV_SEQUENTIAL 0
-#endif
-#ifndef POSIX_MADV_RANDOM
-# define POSIX_MADV_RANDOM 0
-#endif
-#ifndef POSIX_MADV_WILLNEED
-# define POSIX_MADV_WILLNEED 0
-#endif
-#ifndef POSIX_MADV_DONTNEED
-# define POSIX_MADV_DONTNEED 0
-#endif
-
 #if !HAVE_POSIX_MADVISE
 # define posix_madvise(a,b,c) errno = ENOSYS /* also return ENOSYS */
-#endif
-
-#ifndef PROT_NONE
-# define PROT_NONE 0
-#endif
-#ifndef PROT_READ
-# define PROT_READ 0
-#endif
-#ifndef PROT_WRITE
-# define PROT_READ 0
-#endif
-#ifndef PROT_EXEC
-# define PROT_EXEC 0
-#endif
-
-#ifndef ST_RDONLY
-# define ST_RDONLY	0
-#endif
-#ifndef ST_NOSUID
-# define ST_NOSUID	0
-#endif
-#ifndef ST_NODEV
-# define ST_NODEV       0
-#endif
-#ifndef ST_NOEXEC
-# define ST_NOEXEC      0
-#endif
-#ifndef ST_SYNCHRONOUS
-# define ST_SYNCHRONOUS 0
-#endif
-#ifndef ST_MANDLOCK
-# define ST_MANDLOCK    0
-#endif
-#ifndef ST_WRITE
-# define ST_WRITE       0
-#endif
-#ifndef ST_APPEND
-# define ST_APPEND      0
-#endif
-#ifndef ST_IMMUTABLE
-# define ST_IMMUTABLE   0
-#endif
-#ifndef ST_NOATIME
-# define ST_NOATIME     0
-#endif
-#ifndef ST_NODIRATIME
-# define ST_NODIRATIME  0
-#endif
-#ifndef ST_RELATIME
-# define ST_RELATIME    0
-#endif
-
-#ifndef S_IFIFO
-# define S_IFIFO	0
-#endif
-#ifndef S_IFCHR
-# define S_IFCHR	0
-#endif
-#ifndef S_IFBLK
-# define S_IFBLK	0
-#endif
-#ifndef S_IFLNK
-# define S_IFLNK	0
-#endif
-#ifndef S_IFREG
-# define S_IFREG	0
-#endif
-#ifndef S_IFDIR
-# define S_IFDIR	0
-#endif
-#ifndef S_IFWHT
-# define S_IFWHT	0
-#endif
-#ifndef S_IFSOCK
-# define S_IFSOCK	0
 #endif
 
 #ifndef MAP_ANONYMOUS
@@ -296,21 +140,9 @@ static void req_destroy  (eio_req *grp);
 #  define MAP_ANONYMOUS MAP_FIXED /* and hope this fails */
 # endif
 #endif
-#ifndef MAP_HUGETLB
-# define MAP_HUGETLB    0
-#endif
-#ifndef MAP_LOCKED
-# define MAP_LOCKED     0
-#endif
-#ifndef MAP_NORESERVE
-# define MAP_NORESERVE  0
-#endif
-#ifndef MAP_POPULATE
-# define MAP_POPULATE   0
-#endif
-#ifndef MAP_NONBLOCK
-# define MAP_NONBLOCK   0
-#endif
+
+/* defines all sorts of constants to 0 unless they are already defined */
+#include "def0.h"
 
 #ifndef makedev
 # define makedev(maj,min) (((maj) << 8) | (min))
@@ -325,6 +157,66 @@ static void req_destroy  (eio_req *grp);
 #ifndef PAGESIZE
 # define PAGESIZE sysconf (_SC_PAGESIZE)
 #endif
+
+/*****************************************************************************/
+
+static void
+fiemap (eio_req *req)
+{
+  req->result = -1;
+
+#if HAVE_FIEMAP
+  int count = req->int3;
+
+  /* heuristic: first try with 64 extents if we don't know how many, */
+  /* as most files have (hopefully) fewer than this many extents */
+  /* in fact, most should have <= 2, so maybe the 72 below is probably overkill */
+  if (count < 0)
+    count = 72; /* for what it's worth, 72 extents fit nicely into 4kb */
+
+  for (;;)
+    {
+      struct fiemap *fiemap = malloc (sizeof (*fiemap) + sizeof (struct fiemap_extent) * count);
+      errno = ENOMEM;
+      if (!fiemap)
+        return;
+
+      req->ptr1 = fiemap;
+      req->flags |= EIO_FLAG_PTR1_FREE;
+
+      fiemap->fm_start        = req->offs;
+      fiemap->fm_length       = req->size;
+      fiemap->fm_flags        = req->int2;
+      fiemap->fm_extent_count = count;
+
+      if (ioctl (req->int1, FS_IOC_FIEMAP, fiemap))
+        return;
+
+      if (req->int3 >= 0)
+        break; /* when not autosizing we are done */
+
+      if (fiemap->fm_extents [fiemap->fm_mapped_extents - 1].fe_flags & FIEMAP_EXTENT_LAST)
+        break; /* autosizing successful, we are done */
+
+      fiemap->fm_flags        = req->int2;
+      fiemap->fm_extent_count = 0;
+
+      if (ioctl (req->int1, FS_IOC_FIEMAP, fiemap))
+        return;
+
+      count = fiemap->fm_mapped_extents;
+
+      free (fiemap);
+    }
+
+  req->result = 0;
+
+#else
+  errno = ENOSYS;
+#endif
+}
+
+/*****************************************************************************/
 
 enum {
   FLAG_SV2_RO_OFF = 0x40, /* data was set readonly */
@@ -637,6 +529,10 @@ req_invoke (eio_req *req)
             PUSHs (sv_result);
             break;
 
+          case EIO_SEEK:
+            PUSHs (req->result ? sv_result : sv_2mortal (newSVval64 (req->offs)));
+            break;
+
           case EIO_READ:
             {
               SvCUR_set (req->sv2, req->stroffset + (req->result > 0 ? req->result : 0));
@@ -645,6 +541,46 @@ req_invoke (eio_req *req)
               SvSETMAGIC (req->sv2);
               PUSHs (sv_result);
             }
+            break;
+
+          case EIO_CUSTOM:
+            if (req->feed == fiemap)
+              {
+#if HAVE_FIEMAP
+                if (!req->result)
+                  {
+                    struct fiemap *fiemap = (struct fiemap *)req->ptr1;
+
+                    if (fiemap->fm_extent_count)
+                      {
+                        AV *av = newAV ();
+                        int i;
+
+                        while (fiemap->fm_mapped_extents)
+                          {
+                            struct fiemap_extent *extent = &fiemap->fm_extents [--fiemap->fm_mapped_extents];
+                            AV *ext_av = newAV ();
+
+                            av_store (ext_av, 3, newSVuv    (extent->fe_flags));
+                            av_store (ext_av, 2, newSVval64 (extent->fe_length));
+                            av_store (ext_av, 1, newSVval64 (extent->fe_physical));
+                            av_store (ext_av, 0, newSVval64 (extent->fe_logical));
+
+                            av_store (av, fiemap->fm_mapped_extents, newRV_noinc ((SV *)ext_av));
+                          }
+
+                        PUSHs (sv_2mortal (newRV_noinc ((SV *)av)));
+                      }
+                    else
+                      {
+                        SvIV_set (sv_result, fiemap->fm_mapped_extents);
+                        PUSHs (sv_result);
+                      }
+                  }
+#endif
+              }
+            else
+              PUSHs (sv_result);
             break;
 
           case EIO_DUP2: /* EIO_DUP2 actually means aio_close(), so fudge result value */
@@ -922,8 +858,13 @@ BOOT:
 #   define const_niv(name, value) { # name, (IV) value },
 #   define const_iv(name) { # name, (IV) name },
 #   define const_eio(name) { # name, (IV) EIO_ ## name },
-    const_iv (EXDEV)
+
+    /* you have to re-run ./gendef0 after adding/Removing any constants here */
+
     const_iv (ENOSYS)
+    const_iv (EXDEV)
+    const_iv (EBADR)
+
     const_iv (O_RDONLY)
     const_iv (O_WRONLY)
     const_iv (O_RDWR)
@@ -1000,6 +941,25 @@ BOOT:
     const_iv (MAP_NORESERVE)
     const_iv (MAP_POPULATE)
     const_iv (MAP_NONBLOCK)
+
+    const_iv (FIEMAP_FLAG_SYNC)
+    const_iv (FIEMAP_FLAG_XATTR)
+    const_iv (FIEMAP_FLAGS_COMPAT)
+    const_iv (FIEMAP_EXTENT_LAST)
+    const_iv (FIEMAP_EXTENT_UNKNOWN)
+    const_iv (FIEMAP_EXTENT_DELALLOC)
+    const_iv (FIEMAP_EXTENT_ENCODED)
+    const_iv (FIEMAP_EXTENT_DATA_ENCRYPTED)
+    const_iv (FIEMAP_EXTENT_NOT_ALIGNED)
+    const_iv (FIEMAP_EXTENT_DATA_INLINE)
+    const_iv (FIEMAP_EXTENT_DATA_TAIL)
+    const_iv (FIEMAP_EXTENT_UNWRITTEN)
+    const_iv (FIEMAP_EXTENT_MERGED)
+    const_iv (FIEMAP_EXTENT_SHARED)
+
+    const_eio (SEEK_SET)
+    const_eio (SEEK_CUR)
+    const_eio (SEEK_END)
 
     const_eio (MCL_FUTURE)
     const_eio (MCL_CURRENT)
@@ -1132,7 +1092,7 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
         req->sv1  = newSVsv (fh);
         req->int1 = fd;
 
-        REQ_SEND (req);
+        REQ_SEND;
 }
 
 void
@@ -1149,7 +1109,7 @@ aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback
         req->size = nbytes;
         req->int2 = flags;
 
-        REQ_SEND (req);
+        REQ_SEND;
 }
 
 void
@@ -1166,7 +1126,7 @@ aio_fallocate (SV *fh, int mode, off_t offset, size_t len, SV *callback=&PL_sv_u
         req->offs = offset;
         req->size = len;
 
-        REQ_SEND (req);
+        REQ_SEND;
 }
 
 void
@@ -1200,7 +1160,23 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
         req->sv2  = newSVsv (fh);
         req->int2 = fd;
 
-        REQ_SEND (req);
+        REQ_SEND;
+}
+
+void
+aio_seek (SV *fh, SV *offset, int whence, SV *callback=&PL_sv_undef)
+        PPCODE:
+{
+        int fd = s_fileno_croak (fh, 0);
+        dREQ;
+
+        req->type = EIO_SEEK;
+        req->sv1  = newSVsv (fh);
+        req->int1 = fd;
+        req->offs = SvVAL64 (offset);
+        req->int2 = whence;
+
+        REQ_SEND;
 }
 
 void
@@ -1538,6 +1514,29 @@ aio_mlockall (IV flags, SV *callback=&PL_sv_undef)
         req->int1 = flags;
 
         REQ_SEND;
+}
+
+void
+aio_fiemap (SV *fh, off_t start, SV *length, U32 flags, SV *count, SV *callback=&PL_sv_undef)
+        PPCODE:
+{
+  	int fd = s_fileno_croak (fh, 0);
+	dREQ;
+
+        req->type = EIO_CUSTOM;
+        req->sv1  = newSVsv (fh);
+        req->int1 = fd;
+
+        req->feed = fiemap;
+#if HAVE_FIEMAP
+        /* keep our fingers crossed that the next two types are 64 bit */
+        req->offs = start;
+        req->size = SvOK (length) ? SvVAL64 (length) : ~0ULL;
+        req->int2 = flags;
+        req->int3 = SvOK (count) ? SvIV (count) : -1;
+#endif
+
+	REQ_SEND;
 }
 
 void

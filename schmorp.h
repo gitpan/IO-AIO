@@ -3,6 +3,7 @@
 
 /* WARNING
  * This header file is a shared resource between many modules.
+ * perl header files MUST already be included.
  */
 
 #include <signal.h>
@@ -50,6 +51,32 @@
 #  define IS_PADCONST(v) 0
 # endif
 #endif
+
+/* use NV for 32 bit perls as it allows larger offsets */
+#if IVSIZE >= 8
+typedef IV VAL64;
+# define SvVAL64(sv) SvIV (sv)
+# define newSVval64(i64) newSViv (i64)
+#else
+typedef NV VAL64;
+# define SvVAL64(sv) SvNV (sv)
+# define newSVval64(i64) newSVnv (i64)
+#endif
+
+/* typemap for the above */
+/*
+VAL64		T_VAL64
+
+INPUT
+
+T_VAL64
+	$var = ($type)SvVAL64 ($arg);
+
+OUTPUT
+
+T_VAL64
+	$arg = newSVval64 ($var);
+*/
 
 /* 5.11 */
 #ifndef CxHASARGS

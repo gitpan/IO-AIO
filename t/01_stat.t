@@ -56,9 +56,10 @@ print open (PWD, "<&" . fileno $pwd) ? "ok" : "not ok", " 7\n";
 aio_stat *PWD, sub {
    print -f _ ? "ok" : "not ok", " 8\n";
    my @stat = stat _;
-   $stat[0] = $pwd[0]; # dev
-   $stat[6] = $pwd[6]; # rdev
-   print +(join ":", @pwd) eq (join ":", @stat) ? "ok" : "not ok", " 9\n";
+   $stat[0] = $pwd[0]; # dev unreliable on windows
+   $stat[6] = $pwd[6]; # rdev unreliable on windows
+   $stat[8] = $pwd[8]; # atime unreliable on windows
+   print +(join ":", @pwd) eq (join ":", @stat) ? "ok" : "not ok", " 9 # @pwd == @stat\n";
 };
 
 pcb;

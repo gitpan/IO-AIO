@@ -6,6 +6,8 @@ Makefile.PL
 schmorp.h
 AIO.pm
 AIO.xs
+gendef0
+def0.h
 bin/treescan
 t/00_load.t
 t/01_stat.t

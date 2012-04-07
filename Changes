@@ -1,6 +1,5 @@
 Revision history for IO::AIO
 
-TODO: better autoconf.pm that can return LIBS etc.
 TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
@@ -8,6 +7,14 @@ TODO: aio_fcntl, at least for file-locking
 TODO: aio_mincore?
 TODO: getxattr etc.?
 TODO: F_DUPFD_CLOEXEC
+TODO: SEEK_HOLE, SEEK_DATA?
+
+4.14 Sat Apr  7 02:45:18 CEST 2012
+	- fix stat structure usage on windows, which caused bogus stat results.
+        - (libeio) make readahead emulation behave more like actual readahead by never failing.
+        - new request aio_seek.
+        - new request aio_fiemap.
+        - autogenerate the #ifdef/#define 0 blocks for symbols we export.
 
 4.12 Fri Dec 30 08:51:25 CET 2011
 	- realpath would return a random value if the name was too long,
