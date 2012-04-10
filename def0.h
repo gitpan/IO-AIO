@@ -244,3 +244,21 @@
 #ifndef FIEMAP_EXTENT_SHARED
 #define FIEMAP_EXTENT_SHARED 0
 #endif
+#ifndef SPLICE_F_MOVE
+#define SPLICE_F_MOVE 0
+#endif
+#ifndef SPLICE_F_NONBLOCK
+#define SPLICE_F_NONBLOCK 0
+#endif
+#ifndef SPLICE_F_MORE
+#define SPLICE_F_MORE 0
+#endif
+#ifndef SPLICE_F_GIFT
+#define SPLICE_F_GIFT 0
+#endif
+#ifndef SEEK_DATA
+#define SEEK_DATA 0
+#endif
+#ifndef SEEK_HOLE
+#define SEEK_HOLE 0
+#endif

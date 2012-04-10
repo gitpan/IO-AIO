@@ -2,12 +2,20 @@ Revision history for IO::AIO
 
 TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
-TODO: splice/tee/vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
+TODO: vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
 TODO: aio_fcntl, at least for file-locking
 TODO: aio_mincore?
 TODO: getxattr etc.?
 TODO: F_DUPFD_CLOEXEC
-TODO: SEEK_HOLE, SEEK_DATA?
+TODO: emulation for splice?
+
+4.15  Tue Apr 10 06:59:00 CEST 2012
+	- always include linux/types.h for fiemap, for compatibility to
+          ancient systems (Paul Howarth).
+        - experimental support for IO::AIO::splice and ::tee (no aio_...).
+        - provide SEEK_HOLE and SEEK_DATA, if available.
+        - work around (again!) an immensely stupid bug in RHEL, defining
+          autoconf macros in linux system headers (analysed by Paul Howarth).
 
 4.14 Sat Apr  7 02:45:18 CEST 2012
 	- fix stat structure usage on windows, which caused bogus stat results.

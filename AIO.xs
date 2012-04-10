@@ -24,6 +24,7 @@
 #if __linux__
 # include <linux/fs.h>
 # ifdef FS_IOC_FIEMAP
+#  include <linux/types.h>
 #  include <linux/fiemap.h>
 #  define HAVE_FIEMAP 1
 # endif
@@ -699,12 +700,12 @@ reinit (void)
 /*****************************************************************************/
 
 #if !_POSIX_MAPPED_FILES
-# define mmap(addr,length,prot,flags,fd,offs) (errno = ENOSYS, -1)
-# define munmap(addr,length)                  (errno = ENOSYS, -1)
+# define mmap(addr,length,prot,flags,fd,offs) EIO_ENOSYS ()
+# define munmap(addr,length)                  EIO_ENOSYS ()
 #endif
 
 #if !_POSIX_MEMORY_PROTECTION
-# define mprotect(addr,len,prot)              (errno = ENOSYS, -1)
+# define mprotect(addr,len,prot)              EIO_ENOSYS ()
 # define PROT_NONE   0
 # define PROT_WRITE  0
 # define MAP_PRIVATE 0
@@ -957,6 +958,15 @@ BOOT:
     const_iv (FIEMAP_EXTENT_MERGED)
     const_iv (FIEMAP_EXTENT_SHARED)
 
+    const_iv (SPLICE_F_MOVE)
+    const_iv (SPLICE_F_NONBLOCK)
+    const_iv (SPLICE_F_MORE)
+    const_iv (SPLICE_F_GIFT)
+
+    const_iv (SEEK_DATA)
+    const_iv (SEEK_HOLE)
+
+    /* libeio constants */
     const_eio (SEEK_SET)
     const_eio (SEEK_CUR)
     const_eio (SEEK_END)
@@ -1767,7 +1777,7 @@ munlock (SV *scalar, off_t offset = 0, SV *length = &PL_sv_undef)
 #if _POSIX_MEMLOCK_RANGE
         RETVAL = munlock (addr, len);
 #else
-        RETVAL = ((errno = ENOSYS), -1);
+        RETVAL = EIO_ENOSYS ();
 #endif
 }
         OUTPUT:
@@ -1779,10 +1789,38 @@ munlockall ()
 #if _POSIX_MEMLOCK
         munlockall ();
 #else
-        RETVAL = -1;
-        errno = ENOSYS;
+        RETVAL = EIO_ENOSYS ();
 #endif
         OUTPUT:
+        RETVAL
+
+int
+splice (aio_rfd rfh, SV *off_in, aio_wfd wfh, SV *off_out, size_t length, unsigned int flags)
+        CODE:
+{
+#if HAVE_LINUX_SPLICE
+	loff_t off_in_, off_out_;
+        RETVAL = splice (
+          rfh, SvOK (off_in ) ? (off_in_  = SvVAL64 (off_in )), &off_in_  : 0,
+          wfh, SvOK (off_out) ? (off_out_ = SvVAL64 (off_out)), &off_out_ : 0,
+          length, flags
+        );
+#else
+        RETVAL = EIO_ENOSYS ();
+#endif
+}
+	OUTPUT:
+        RETVAL
+
+int
+tee (aio_rfd rfh, aio_wfd wfh, size_t length, unsigned int flags)
+        CODE:
+#if HAVE_LINUX_SPLICE
+        RETVAL = tee (rfh, wfh, length, flags);
+#else
+        RETVAL = EIO_ENOSYS ();
+#endif
+	OUTPUT:
         RETVAL
 
 void _on_next_submit (SV *cb)

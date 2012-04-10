@@ -170,7 +170,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '4.14';
+   our $VERSION = '4.15';
 
    our @AIO_REQ = qw(aio_sendfile aio_seek aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -426,6 +426,12 @@ case of an error.
 In theory, the C<$whence> constants could be different than the
 corresponding values from L<Fcntl>, but perl guarantees they are the same,
 so don't panic.
+
+As a GNU/Linux (and maybe Solaris) extension, also the constants
+C<IO::AIO::SEEK_DATA> and C<IO::AIO::SEEK_HOLE> are available, if they
+could be found. No guarantees about suitability for use in C<aio_seek> or
+Perl's C<sysseek> can be made though, although I would naively assume they
+"just work".
 
 =item aio_read  $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
 
@@ -1964,6 +1970,23 @@ Calls the C<munlockall> function.
 
 On systems that do not implement C<munlockall>, this function returns
 ENOSYS, otherwise the return value of C<munlockall>.
+
+=item IO::AIO::splice $r_fh, $r_off, $w_fh, $w_off, $length, $flags
+
+Calls the GNU/Linux C<splice(2)> syscall, if available. If C<$r_off> or
+C<$w_off> are C<undef>, then C<NULL> is passed for these, otherwise they
+should be the file offset.
+
+The following symbol flag values are available: C<IO::AIO::SPLICE_F_MOVE>,
+C<IO::AIO::SPLICE_F_NONBLOCK>, C<IO::AIO::SPLICE_F_MORE> and
+C<IO::AIO::SPLICE_F_GIFT>.
+
+See the C<splice(2)> manpage for details.
+
+=item IO::AIO::tee $r_fh, $w_fh, $length, $flags
+
+Calls the GNU/Linux C<tee(2)> syscall, see it's manpage and the
+description for C<IO::AIO::splice> above for details.
 
 =back
 

@@ -358,6 +358,12 @@ FUNCTIONS
         corresponding values from Fcntl, but perl guarantees they are the
         same, so don't panic.
 
+        As a GNU/Linux (and maybe Solaris) extension, also the constants
+        "IO::AIO::SEEK_DATA" and "IO::AIO::SEEK_HOLE" are available, if they
+        could be found. No guarantees about suitability for use in
+        "aio_seek" or Perl's "sysseek" can be made though, although I would
+        naively assume they "just work".
+
     aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
     aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
         Reads or writes $length bytes from or to the specified $fh and
@@ -1530,6 +1536,21 @@ FUNCTIONS
 
         On systems that do not implement "munlockall", this function returns
         ENOSYS, otherwise the return value of "munlockall".
+
+    IO::AIO::splice $r_fh, $r_off, $w_fh, $w_off, $length, $flags
+        Calls the GNU/Linux splice(2) syscall, if available. If $r_off or
+        $w_off are "undef", then "NULL" is passed for these, otherwise they
+        should be the file offset.
+
+        The following symbol flag values are available:
+        "IO::AIO::SPLICE_F_MOVE", "IO::AIO::SPLICE_F_NONBLOCK",
+        "IO::AIO::SPLICE_F_MORE" and "IO::AIO::SPLICE_F_GIFT".
+
+        See the splice(2) manpage for details.
+
+    IO::AIO::tee $r_fh, $w_fh, $length, $flags
+        Calls the GNU/Linux tee(2) syscall, see it's manpage and the
+        description for "IO::AIO::splice" above for details.
 
 EVENT LOOP INTEGRATION
     It is recommended to use AnyEvent::AIO to integrate IO::AIO
