@@ -10,6 +10,9 @@ TODO: F_DUPFD_CLOEXEC
 TODO: emulation for splice?
 TODO: eio_mmap|mlock|munmap|splice...
 
+4.18  Thu Oct 11 07:01:26 CEST 2012
+	- fix unintended xthread_create by intentionalising it :)
+
 4.17  Thu Oct 11 05:19:47 CEST 2012
         - rename aio_fallocate to aio_allocate, to match documentation.
 	- add list of linux fsid values to aio_statvfs docs.
