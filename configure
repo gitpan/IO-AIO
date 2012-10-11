@@ -3984,42 +3984,6 @@ test $ac_cv_fdatasync = yes &&
 $as_echo "#define HAVE_FDATASYNC 1" >>confdefs.h
 
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pread and pwrite" >&5
-$as_echo_n "checking for pread and pwrite... " >&6; }
-if test "${ac_cv_preadwrite+set}" = set; then :
-  $as_echo_n "(cached) " >&6
-else
-  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-#include <unistd.h>
-int main (void)
-{
-   int fd = 0;
-   size_t count = 1;
-   char buf;
-   off_t offset = 1;
-   ssize_t res;
-   res = pread (fd, &buf, count, offset);
-   res = pwrite (fd, &buf, count, offset);
-   return 0;
-}
-
-_ACEOF
-if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_preadwrite=yes
-else
-  ac_cv_preadwrite=no
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext conftest.$ac_ext
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_preadwrite" >&5
-$as_echo "$ac_cv_preadwrite" >&6; }
-test $ac_cv_preadwrite = yes &&
-$as_echo "#define HAVE_PREADWRITE 1" >>confdefs.h
-
-
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for sendfile" >&5
 $as_echo_n "checking for sendfile... " >&6; }
 if test "${ac_cv_sendfile+set}" = set; then :
@@ -4107,7 +4071,7 @@ $as_echo "#define HAVE_SYNC_FILE_RANGE 1" >>confdefs.h
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for fallocate" >&5
 $as_echo_n "checking for fallocate... " >&6; }
-if test "${ac_cv_flinux_allocate+set}" = set; then :
+if test "${ac_cv_linux_fallocate+set}" = set; then :
   $as_echo_n "(cached) " >&6
 else
   cat confdefs.h - <<_ACEOF >conftest.$ac_ext
@@ -4134,8 +4098,8 @@ fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
 fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_flinux_allocate" >&5
-$as_echo "$ac_cv_flinux_allocate" >&6; }
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_linux_fallocate" >&5
+$as_echo "$ac_cv_linux_fallocate" >&6; }
 test $ac_cv_linux_fallocate = yes &&
 $as_echo "#define HAVE_LINUX_FALLOCATE 1" >>confdefs.h
 

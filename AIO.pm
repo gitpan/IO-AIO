@@ -170,12 +170,12 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '4.15';
+   our $VERSION = '4.17';
 
    our @AIO_REQ = qw(aio_sendfile aio_seek aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
                      aio_scandir aio_symlink aio_readlink aio_realpath aio_sync
-                     aio_fsync aio_syncfs aio_fdatasync aio_sync_file_range aio_fallocate
+                     aio_fsync aio_syncfs aio_fdatasync aio_sync_file_range aio_allocate
                      aio_pathsync aio_readahead aio_fiemap
                      aio_rename aio_link aio_move aio_copy aio_group
                      aio_nop aio_mknod aio_load aio_rmtree aio_mkdir aio_chown
@@ -204,8 +204,8 @@ BEGIN {
 
 =head2 QUICK OVERVIEW
 
-This section simply lists the prototypes of the most important functions
-for quick reference. See the following sections for function-by-function
+This section simply lists the prototypes most of the functions for
+quick reference. See the following sections for function-by-function
 documentation.
 
    aio_wd $pathname, $callback->($wd)
@@ -223,6 +223,8 @@ documentation.
    aio_chown $fh_or_path, $uid, $gid, $callback->($status)
    aio_chmod $fh_or_path, $mode, $callback->($status)
    aio_truncate $fh_or_path, $offset, $callback->($status)
+   aio_allocate $fh, $mode, $offset, $len, $callback->($status)
+   aio_fiemap $fh, $start, $length, $flags, $count, $cb->(\@extents)
    aio_unlink $pathname, $callback->($status)
    aio_mknod $pathname, $mode, $dev, $callback->($status)
    aio_link $srcpath, $dstpath, $callback->($status)
@@ -274,6 +276,8 @@ documentation.
 
    IO::AIO::sendfile $ofh, $ifh, $offset, $count
    IO::AIO::fadvise $fh, $offset, $len, $advice
+   IO::AIO::mmap $scalar, $length, $prot, $flags[, $fh[, $offset]]
+   IO::AIO::munmap $scalar
    IO::AIO::madvise $scalar, $offset, $length, $advice
    IO::AIO::mprotect $scalar, $offset, $length, $protect
    IO::AIO::munlock $scalar, $offset = 0, $length = undef
@@ -360,7 +364,7 @@ priority, so the effect is cumulative.
 =item aio_open $pathname, $flags, $mode, $callback->($fh)
 
 Asynchronously open or create a file and call the callback with a newly
-created filehandle for the file.
+created filehandle for the file (or C<undef> in case of an error).
 
 The pathname passed to C<aio_open> must be absolute. See API NOTES, above,
 for an explanation.
@@ -601,6 +605,87 @@ Example: stat C</wd> and dump out the data if successful.
       fsid    => 1810
    }
 
+Here is a (likely partial) list of fsid values used by Linux - it is safe
+to hardcode these when the $^O is C<linux>:
+
+   0x0000adf5 adfs
+   0x0000adff affs
+   0x5346414f afs
+   0x09041934 anon-inode filesystem
+   0x00000187 autofs
+   0x42465331 befs
+   0x1badface bfs
+   0x42494e4d binfmt_misc
+   0x9123683e btrfs
+   0x0027e0eb cgroupfs
+   0xff534d42 cifs
+   0x73757245 coda
+   0x012ff7b7 coh
+   0x28cd3d45 cramfs
+   0x453dcd28 cramfs-wend (wrong endianness)
+   0x64626720 debugfs
+   0x00001373 devfs
+   0x00001cd1 devpts
+   0x0000f15f ecryptfs
+   0x00414a53 efs
+   0x0000137d ext
+   0x0000ef53 ext2/ext3
+   0x0000ef51 ext2
+   0x00004006 fat
+   0x65735546 fuseblk
+   0x65735543 fusectl
+   0x0bad1dea futexfs
+   0x01161970 gfs2
+   0x47504653 gpfs
+   0x00004244 hfs
+   0xf995e849 hpfs
+   0x958458f6 hugetlbfs
+   0x2bad1dea inotifyfs
+   0x00009660 isofs
+   0x000072b6 jffs2
+   0x3153464a jfs
+   0x6b414653 k-afs
+   0x0bd00bd0 lustre
+   0x0000137f minix
+   0x0000138f minix 30 char names
+   0x00002468 minix v2
+   0x00002478 minix v2 30 char names
+   0x00004d5a minix v3
+   0x19800202 mqueue
+   0x00004d44 msdos
+   0x0000564c novell
+   0x00006969 nfs
+   0x6e667364 nfsd
+   0x00003434 nilfs
+   0x5346544e ntfs
+   0x00009fa1 openprom
+   0x7461636F ocfs2
+   0x00009fa0 proc
+   0x6165676c pstorefs
+   0x0000002f qnx4
+   0x858458f6 ramfs
+   0x52654973 reiserfs
+   0x00007275 romfs
+   0x67596969 rpc_pipefs
+   0x73636673 securityfs
+   0xf97cff8c selinux
+   0x0000517b smb
+   0x534f434b sockfs
+   0x73717368 squashfs
+   0x62656572 sysfs
+   0x012ff7b6 sysv2
+   0x012ff7b5 sysv4
+   0x01021994 tmpfs
+   0x15013346 udf
+   0x00011954 ufs
+   0x54190100 ufs byteswapped
+   0x00009fa2 usbdevfs
+   0x01021997 v9fs
+   0xa501fcf5 vxfs
+   0xabba1974 xenfs
+   0x012ff7b4 xenix
+   0x58465342 xfs
+   0x012fd16d xia
 
 =item aio_utime $fh_or_path, $atime, $mtime, $callback->($status)
 
@@ -636,6 +721,22 @@ Examples:
 =item aio_truncate $fh_or_path, $offset, $callback->($status)
 
 Works like truncate(2) or ftruncate(2).
+
+
+=item aio_allocate $fh, $mode, $offset, $len, $callback->($status)
+
+Allocates or freed disk space according to the C<$mode> argument. See the
+linux C<fallocate> docuemntation for details.
+
+C<$mode> can currently be C<0> or C<IO::AIO::FALLOC_FL_KEEP_SIZE>
+to allocate space, or C<IO::AIO::FALLOC_FL_PUNCH_HOLE |
+IO::AIO::FALLOC_FL_KEEP_SIZE>, to deallocate a file range.
+
+The file system block size used by C<fallocate> is presumably the
+C<f_bsize> returned by C<statvfs>.
+
+If C<fallocate> isn't available or cannot be emulated (currently no
+emulation will be attempted), passes C<-1> and sets C<$!> to C<ENOSYS>.
 
 
 =item aio_chmod $fh_or_path, $mode, $callback->($status)
@@ -1259,9 +1360,9 @@ Example: asynchronously lock all current and future pages into memory.
 
 =item aio_fiemap $fh, $start, $length, $flags, $count, $cb->(\@extents)
 
-Queries the extents of the given file (by calling the Linux FIEMAP ioctl,
-see L<http://cvs.schmorp.de/IO-AIO/doc/fiemap.txt> for details). If the
-C<ioctl> is not available on your OS, then this rquiest will fail with
+Queries the extents of the given file (by calling the Linux C<FIEMAP>
+ioctl, see L<http://cvs.schmorp.de/IO-AIO/doc/fiemap.txt> for details). If
+the ioctl is not available on your OS, then this request will fail with
 C<ENOSYS>.
 
 C<$start> is the starting offset to query extents for, C<$length> is the
@@ -1274,9 +1375,9 @@ exported), and is normally C<0> or C<IO::AIO::FIEMAP_FLAG_SYNC> to query
 the data portion.
 
 C<$count> is the maximum number of extent records to return. If it is
-C<undef>, then IO::AIO queries all extents of the file. As a very special
+C<undef>, then IO::AIO queries all extents of the range. As a very special
 case, if it is C<0>, then the callback receives the number of extents
-instead of the extents themselves.
+instead of the extents themselves (which is unreliable, see below).
 
 If an error occurs, the callback receives no arguments. The special
 C<errno> value C<IO::AIO::EBADR> is available to test for flag errors.
@@ -1288,7 +1389,7 @@ following members:
    [$logical, $physical, $length, $flags]
 
 Flags is any combination of the following flag values (typically either C<0>
-or C<IO::AIO::FIEMAP_EXTENT_LAST>):
+or C<IO::AIO::FIEMAP_EXTENT_LAST> (1)):
 
 C<IO::AIO::FIEMAP_EXTENT_LAST>, C<IO::AIO::FIEMAP_EXTENT_UNKNOWN>,
 C<IO::AIO::FIEMAP_EXTENT_DELALLOC>, C<IO::AIO::FIEMAP_EXTENT_ENCODED>,
@@ -1296,6 +1397,11 @@ C<IO::AIO::FIEMAP_EXTENT_DATA_ENCRYPTED>, C<IO::AIO::FIEMAP_EXTENT_NOT_ALIGNED>,
 C<IO::AIO::FIEMAP_EXTENT_DATA_INLINE>, C<IO::AIO::FIEMAP_EXTENT_DATA_TAIL>,
 C<IO::AIO::FIEMAP_EXTENT_UNWRITTEN>, C<IO::AIO::FIEMAP_EXTENT_MERGED> or
 C<IO::AIO::FIEMAP_EXTENT_SHARED>.
+
+At the time of this writing (Linux 3.2), this requets is unreliable unless
+C<$count> is C<undef>, as the kernel has all sorts of bugs preventing
+it to return all extents of a range for files with large number of
+extents. The code works around all these issues if C<$count> is undef.
 
 =item aio_group $callback->(...)
 
@@ -1908,7 +2014,8 @@ ENOSYS, otherwise the return value of C<mprotect>.
 =item IO::AIO::mmap $scalar, $length, $prot, $flags, $fh[, $offset]
 
 Memory-maps a file (or anonymous memory range) and attaches it to the
-given C<$scalar>, which will act like a string scalar.
+given C<$scalar>, which will act like a string scalar. Returns true on
+success, and false otherwise.
 
 The only operations allowed on the scalar are C<substr>/C<vec> that don't
 change the string length, and most read-only operations such as copying it
@@ -1976,6 +2083,9 @@ ENOSYS, otherwise the return value of C<munlockall>.
 Calls the GNU/Linux C<splice(2)> syscall, if available. If C<$r_off> or
 C<$w_off> are C<undef>, then C<NULL> is passed for these, otherwise they
 should be the file offset.
+
+C<$r_fh> and C<$w_fh> should not refer to the same file, as splice might
+silently corrupt the data in this case.
 
 The following symbol flag values are available: C<IO::AIO::SPLICE_F_MOVE>,
 C<IO::AIO::SPLICE_F_NONBLOCK>, C<IO::AIO::SPLICE_F_MORE> and

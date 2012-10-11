@@ -167,49 +167,86 @@ fiemap (eio_req *req)
   req->result = -1;
 
 #if HAVE_FIEMAP
+  /* assume some c99 */
+  struct fiemap *fiemap = 0;
+  size_t end_offset;
   int count = req->int3;
 
-  /* heuristic: first try with 64 extents if we don't know how many, */
-  /* as most files have (hopefully) fewer than this many extents */
-  /* in fact, most should have <= 2, so maybe the 72 below is probably overkill */
+  req->flags |= EIO_FLAG_PTR1_FREE;
+
+  /* heuristic: start with 512 bytes (8 extents), and if that isn't enough, */
+  /* increase in 3.5kb steps */
   if (count < 0)
-    count = 72; /* for what it's worth, 72 extents fit nicely into 4kb */
+    count = 8;
+
+  fiemap = malloc (sizeof (*fiemap) + sizeof (struct fiemap_extent) * count);
+  errno = ENOMEM;
+  if (!fiemap)
+    return;
+
+  req->ptr1 = fiemap;
+
+  fiemap->fm_start        = req->offs;
+  fiemap->fm_length       = req->size;
+  fiemap->fm_flags        = req->int2;
+  fiemap->fm_extent_count = count;
+
+  if (ioctl (req->int1, FS_IOC_FIEMAP, fiemap) < 0)
+    return;
+
+  if (req->int3 >= 0 /* not autosizing */
+      || !fiemap->fm_mapped_extents /* no more extents */
+      || fiemap->fm_extents [fiemap->fm_mapped_extents - 1].fe_flags & FIEMAP_EXTENT_LAST /* hit eof */)
+    goto done;
+
+  /* else we have to loop -
+   * it would be tempting (atcually I tried that first) to just query the
+   * number of extents needed, but linux often feels like not returning all
+   * extents, without telling us it left any out. this complicates
+   * this quite a bit.
+   */
+
+  end_offset = fiemap->fm_length + (fiemap->fm_length == FIEMAP_MAX_OFFSET ? 0 : fiemap->fm_start);
 
   for (;;)
     {
-      struct fiemap *fiemap = malloc (sizeof (*fiemap) + sizeof (struct fiemap_extent) * count);
+      /* we go in 54 extent steps - 3kb, in the hope that this fits nicely on the eio stack (normally 16+ kb) */
+      char scratch[3072];
+      struct fiemap *incmap = (struct fiemap *)scratch;
+
+      incmap->fm_start        = fiemap->fm_extents [fiemap->fm_mapped_extents - 1].fe_logical
+                                + fiemap->fm_extents [fiemap->fm_mapped_extents - 1].fe_length;
+      incmap->fm_length       = fiemap->fm_length - (incmap->fm_start - fiemap->fm_start);
+      incmap->fm_flags        = fiemap->fm_flags;
+      incmap->fm_extent_count = (sizeof (scratch) - sizeof (struct fiemap)) / sizeof (struct fiemap_extent);
+
+      if (ioctl (req->int1, FS_IOC_FIEMAP, incmap) < 0)
+        return;
+
+      count = fiemap->fm_mapped_extents + incmap->fm_mapped_extents;
+      fiemap = realloc (fiemap, sizeof (*fiemap) + sizeof (struct fiemap_extent) * count);
       errno = ENOMEM;
       if (!fiemap)
         return;
 
       req->ptr1 = fiemap;
-      req->flags |= EIO_FLAG_PTR1_FREE;
 
-      fiemap->fm_start        = req->offs;
-      fiemap->fm_length       = req->size;
-      fiemap->fm_flags        = req->int2;
-      fiemap->fm_extent_count = count;
+      for (count = 0; count < incmap->fm_mapped_extents; ++count)
+        {
+          struct fiemap_extent *e = incmap->fm_extents + count;
 
-      if (ioctl (req->int1, FS_IOC_FIEMAP, fiemap))
-        return;
+          if (e->fe_logical + e->fe_length >= end_offset)
+            goto done;
 
-      if (req->int3 >= 0)
-        break; /* when not autosizing we are done */
+          fiemap->fm_extents [fiemap->fm_mapped_extents++] = *e;
 
-      if (fiemap->fm_extents [fiemap->fm_mapped_extents - 1].fe_flags & FIEMAP_EXTENT_LAST)
-        break; /* autosizing successful, we are done */
+          if (e->fe_flags & FIEMAP_EXTENT_LAST)
+            goto done;
 
-      fiemap->fm_flags        = req->int2;
-      fiemap->fm_extent_count = 0;
-
-      if (ioctl (req->int1, FS_IOC_FIEMAP, fiemap))
-        return;
-
-      count = fiemap->fm_mapped_extents;
-
-      free (fiemap);
+        }
     }
 
+done:
   req->result = 0;
 
 #else
@@ -472,6 +509,11 @@ req_invoke (eio_req *req)
                 {
                   EIO_STRUCT_STATVFS *f = EIO_STATVFS_BUF (req);
                   HV *hv = newHV ();
+                  /* POSIX requires fsid to be unsigned long, but AIX in its infinite wisdom
+                   * chooses to make it a struct.
+                   */
+                  unsigned long fsid = 0;
+                  memcpy (&fsid, &f->f_fsid, sizeof (unsigned long) < sizeof (f->f_fsid) ? sizeof (unsigned long) : sizeof (f->f_fsid));
 
                   rv = sv_2mortal (newRV_noinc ((SV *)hv));
 
@@ -483,7 +525,7 @@ req_invoke (eio_req *req)
                   hv_store (hv, "files"  , sizeof ("files"  ) - 1, newSVval64 (f->f_files  ), 0);
                   hv_store (hv, "ffree"  , sizeof ("ffree"  ) - 1, newSVval64 (f->f_ffree  ), 0);
                   hv_store (hv, "favail" , sizeof ("favail" ) - 1, newSVval64 (f->f_favail ), 0);
-                  hv_store (hv, "fsid"   , sizeof ("fsid"   ) - 1, newSVval64 (f->f_fsid   ), 0);
+                  hv_store (hv, "fsid"   , sizeof ("fsid"   ) - 1, newSVval64 (fsid        ), 0);
                   hv_store (hv, "flag"   , sizeof ("flag"   ) - 1, newSVval64 (f->f_flag   ), 0);
                   hv_store (hv, "namemax", sizeof ("namemax") - 1, newSVval64 (f->f_namemax), 0);
                 }
@@ -985,6 +1027,7 @@ BOOT:
     const_eio (SYNC_FILE_RANGE_WAIT_AFTER)
 
     const_eio (FALLOC_FL_KEEP_SIZE)
+    const_eio (FALLOC_FL_PUNCH_HOLE)
 
     const_eio (READDIR_DENTS)
     const_eio (READDIR_DIRS_FIRST)
@@ -1095,7 +1138,7 @@ aio_fsync (SV *fh, SV *callback=&PL_sv_undef)
            aio_syncfs    = EIO_SYNCFS
 	PPCODE:
 {
-  	int fd = s_fileno_croak (fh, 0);
+	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         req->type = ix;
@@ -1109,7 +1152,7 @@ void
 aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
-  	int fd = s_fileno_croak (fh, 0);
+	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         req->type = EIO_SYNC_FILE_RANGE;
@@ -1123,10 +1166,10 @@ aio_sync_file_range (SV *fh, off_t offset, size_t nbytes, UV flags, SV *callback
 }
 
 void
-aio_fallocate (SV *fh, int mode, off_t offset, size_t len, SV *callback=&PL_sv_undef)
+aio_allocate (SV *fh, int mode, off_t offset, size_t len, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
-  	int fd = s_fileno_croak (fh, 0);
+	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         req->type = EIO_FALLOCATE;
@@ -1144,7 +1187,7 @@ aio_close (SV *fh, SV *callback=&PL_sv_undef)
 	PPCODE:
 {
         static int close_fd = -1; /* dummy fd to close fds via dup2 */
-  	int fd = s_fileno_croak (fh, 0);
+	int fd = s_fileno_croak (fh, 0);
         dREQ;
 
         if (expect_false (close_fd < 0))
@@ -1217,7 +1260,10 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
           {
             /* read: check type and grow scalar as necessary */
             SvUPGRADE (data, SVt_PV);
-            svptr = SvGROW (data, len + dataoffset + 1);
+            if (SvLEN (data) >= SvCUR (data))
+              svptr = SvGROW (data, len + dataoffset + 1);
+            else if (SvCUR (data) < len + dataoffset)
+              croak ("length + dataoffset outside of scalar, and cannot grow");
           }
 
         {
@@ -1261,8 +1307,8 @@ void
 aio_sendfile (SV *out_fh, SV *in_fh, off_t in_offset, size_t length, SV *callback=&PL_sv_undef)
         PPCODE:
 {
-  	int ifd = s_fileno_croak (in_fh , 0);
-  	int ofd = s_fileno_croak (out_fh, 1);
+	int ifd = s_fileno_croak (in_fh , 0);
+	int ofd = s_fileno_croak (out_fh, 1);
 	dREQ;
 
         req->type = EIO_SENDFILE;
@@ -1280,7 +1326,7 @@ void
 aio_readahead (SV *fh, off_t offset, size_t length, SV *callback=&PL_sv_undef)
         PPCODE:
 {
-  	int fd = s_fileno_croak (fh, 0);
+	int fd = s_fileno_croak (fh, 0);
 	dREQ;
 
         req->type = EIO_READAHEAD;
@@ -1530,7 +1576,7 @@ void
 aio_fiemap (SV *fh, off_t start, SV *length, U32 flags, SV *count, SV *callback=&PL_sv_undef)
         PPCODE:
 {
-  	int fd = s_fileno_croak (fh, 0);
+	int fd = s_fileno_croak (fh, 0);
 	dREQ;
 
         req->type = EIO_CUSTOM;
@@ -1688,7 +1734,7 @@ sendfile (aio_wfd ofh, aio_rfd ifh, off_t offset, size_t count)
         RETVAL
 
 void
-mmap (SV *scalar, size_t length, int prot, int flags, SV *fh, off_t offset = 0)
+mmap (SV *scalar, size_t length, int prot, int flags, SV *fh = &PL_sv_undef, off_t offset = 0)
 	PPCODE:
         sv_unmagic (scalar, MMAP_MAGIC);
 {
@@ -1731,7 +1777,7 @@ madvise (SV *scalar, off_t offset = 0, SV *length = &PL_sv_undef, IV advice_or_p
         CODE:
 {
 	STRLEN svlen;
-  	void *addr = SvPVbyte (scalar, svlen);
+	void *addr = SvPVbyte (scalar, svlen);
         size_t len = SvUV (length);
 
         if (offset < 0)
@@ -1760,7 +1806,7 @@ munlock (SV *scalar, off_t offset = 0, SV *length = &PL_sv_undef)
         CODE:
 {
 	STRLEN svlen;
-  	void *addr = SvPVbyte (scalar, svlen);
+	void *addr = SvPVbyte (scalar, svlen);
         size_t len = SvUV (length);
 
         if (offset < 0)

@@ -16,7 +16,7 @@ if ($^O eq "MSWin32") {
 *** also, the windows SDK is expected to be installed in /sdk
 *** and visual C is expected to be installed in /vc98
 ***
-*** You can set the INC and LIBS environment variables
+*** Akternatively, set the INC and LIBS environment variables
 *** accordingly before running Makeifle.PL, or you can
 *** pass INC and LIBS arguments to Makefile.PL itself.
 ***

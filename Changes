@@ -8,6 +8,33 @@ TODO: aio_mincore?
 TODO: getxattr etc.?
 TODO: F_DUPFD_CLOEXEC
 TODO: emulation for splice?
+TODO: eio_mmap|mlock|munmap|splice...
+
+4.17  Thu Oct 11 05:19:47 CEST 2012
+        - rename aio_fallocate to aio_allocate, to match documentation.
+	- add list of linux fsid values to aio_statvfs docs.
+        - work around a bug in btrfs' FIEMAP ioctl implementation.
+        - work around AIX bug: statvfs.f_fsid is a struct, not unsigned long
+          as per unix spec.
+
+4.16  Tue Aug 14 05:39:03 CEST 2012
+	- aio_statvfs was wromgly marked for wd emulation, causing
+          it to malfunction for paths.
+        - fix a crash in aio_fiemap, when used on ranges without any
+          extents.
+        - work around linux kernel bug (at least in 3.2): kernel might
+          trash fiemap input arguments.
+        - work around linux kernel bug (at least in 3.2): kernel does not
+          set FIEMAP_EXTENT_LAST on last segment.
+        - work around linux kernel bug (at least in 3.2): kernel silently
+          truncates segment count if a file.
+	- make fh argument of IO::AIO::mmap optional, also add mmap/munmap
+          to quick overview.
+        - splice can corrupt data.
+        - (libeio) remove pread/pwrite emulation.
+        - do not grow mmaped scalars in aio_read.
+        - add FALLOC_FL_PUNCH_HOLE and document fallocate.
+        - provide pread/pwrite for win32, making it link again on native win32.
 
 4.15  Tue Apr 10 06:59:00 CEST 2012
 	- always include linux/types.h for fiemap, for compatibility to
