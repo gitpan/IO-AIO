@@ -70,7 +70,6 @@ call C<poll_cb> (or other C<aio_> functions) recursively.
 This is a simple example that uses the EV module and loads
 F</etc/passwd> asynchronously:
 
-   use Fcntl;
    use EV;
    use IO::AIO;
 
@@ -170,7 +169,7 @@ use common::sense;
 use base 'Exporter';
 
 BEGIN {
-   our $VERSION = '4.18';
+   our $VERSION = 4.2;
 
    our @AIO_REQ = qw(aio_sendfile aio_seek aio_read aio_write aio_open aio_close
                      aio_stat aio_lstat aio_unlink aio_rmdir aio_readdir aio_readdirx
@@ -605,8 +604,8 @@ Example: stat C</wd> and dump out the data if successful.
       fsid    => 1810
    }
 
-Here is a (likely partial) list of fsid values used by Linux - it is safe
-to hardcode these when the $^O is C<linux>:
+Here is a (likely partial - send me updates!) list of fsid values used by
+Linux - it is safe to hardcode these when C<$^O> is C<linux>:
 
    0x0000adf5 adfs
    0x0000adff affs
@@ -785,7 +784,7 @@ callback.
 =item aio_realpath $pathname, $callback->($path)
 
 Asynchronously make the path absolute and resolve any symlinks in
-C<$path>. The resulting path only consists of directories (Same as
+C<$path>. The resulting path only consists of directories (same as
 L<Cwd::realpath>).
 
 This request can be used to get the absolute path of the current working
@@ -796,6 +795,10 @@ directory by passing it a path of F<.> (a single dot).
 
 Asynchronously rename the object at C<$srcpath> to C<$dstpath>, just as
 rename(2) and call the callback with the result code.
+
+On systems that support the AIO::WD working directory abstraction
+natively, the case C<[$wd, "."]> as C<$srcpath> is specialcased - instead
+of failing, C<rename> is called on the absolute path of C<$wd>.
 
 
 =item aio_mkdir $pathname, $mode, $callback->($status)
@@ -809,6 +812,10 @@ request is executed, so do not change your umask.
 
 Asynchronously rmdir (delete) a directory and call the callback with the
 result code.
+
+On systems that support the AIO::WD working directory abstraction
+natively, the case C<[$wd, "."]> is specialcased - instead of failing,
+C<rmdir> is called on the absolute path of C<$wd>.
 
 
 =item aio_readdir $pathname, $callback->($entries)
@@ -1183,7 +1190,7 @@ sub aio_scandir($$;$) {
 =item aio_rmtree $pathname, $callback->($status)
 
 Delete a directory tree starting (and including) C<$path>, return the
-status of the final C<rmdir> only.  This is a composite request that
+status of the final C<rmdir> only. This is a composite request that
 uses C<aio_scandir> to recurse into and rmdir directories, and unlink
 everything else.
 
@@ -1313,10 +1320,10 @@ This is a rather advanced IO::AIO call, which works best on mmap(2)ed
 scalars.
 
 It touches (reads or writes) all memory pages in the specified
-range inside the scalar.  All caveats and parameters are the same
+range inside the scalar. All caveats and parameters are the same
 as for C<aio_msync>, above, except for flags, which must be either
 C<0> (which reads all pages and ensures they are instantiated) or
-C<IO::AIO::MT_MODIFY>, which modifies the memory page s(by reading and
+C<IO::AIO::MT_MODIFY>, which modifies the memory pages (by reading and
 writing an octet from it, which dirties the page).
 
 =item aio_mlock $scalar, $offset = 0, $length = undef, $callback->($status)
@@ -1527,7 +1534,7 @@ pathname will use the directory fd on newer systems, and the string on
 older systems. Some functions (such as realpath) will always rely on the
 string form of the pathname.
 
-So this fucntionality is mainly useful to get some protection against
+So this functionality is mainly useful to get some protection against
 C<chdir>, to easily get an absolute path out of a relative path for future
 reference, and to speed up doing many operations in the same directory
 (e.g. when stat'ing all files in a directory).
@@ -1550,23 +1557,29 @@ request with C<ENOENT>, there is often no need for error checking in the
 C<aio_wd> callback, as future requests using the value will fail in the
 expected way.
 
-If this call isn't available because your OS lacks it or it couldn't be
-detected, it will be emulated by calling C<fsync> instead.
-
 =item IO::AIO::CWD
 
 This is a compiletime constant (object) that represents the process
 current working directory.
 
-Specifying this object as working directory object for a pathname is as
-if the pathname would be specified directly, without a directory object,
-e.g., these calls are functionally identical:
+Specifying this object as working directory object for a pathname is as if
+the pathname would be specified directly, without a directory object. For
+example, these calls are functionally identical:
 
    aio_stat "somefile", sub { ... };
    aio_stat [IO::AIO::CWD, "somefile"], sub { ... };
 
 =back
 
+To recover the path associated with an IO::AIO::WD object, you can use
+C<aio_realpath>:
+
+   aio_realpath $wd, sub {
+      warn "path is $_[0]\n";
+   };
+
+Currently, C<aio_statvfs> always, and C<aio_rename> and C<aio_rmdir>
+sometimes, fall back to using an absolue path.
 
 =head2 IO::AIO::REQ CLASS
 
@@ -1754,16 +1767,19 @@ See C<poll_cb> for an example.
 
 =item IO::AIO::poll_cb
 
-Process some outstanding events on the result pipe. You have to call
-this regularly. Returns C<0> if all events could be processed (or there
-were no events to process), or C<-1> if it returned earlier for whatever
-reason. Returns immediately when no events are outstanding. The amount of
-events processed depends on the settings of C<IO::AIO::max_poll_req> and
-C<IO::AIO::max_poll_time>.
+Process some requests that have reached the result phase (i.e. they have
+been executed but the results are not yet reported). You have to call
+this "regularly" to finish outstanding requests.
 
-If not all requests were processed for whatever reason, the filehandle
-will still be ready when C<poll_cb> returns, so normally you don't have to
-do anything special to have it called later.
+Returns C<0> if all events could be processed (or there were no
+events to process), or C<-1> if it returned earlier for whatever
+reason. Returns immediately when no events are outstanding. The amount
+of events processed depends on the settings of C<IO::AIO::max_poll_req>,
+C<IO::AIO::max_poll_time> and C<IO::AIO::max_outstanding>.
+
+If not all requests were processed for whatever reason, the poll file
+descriptor will still be ready when C<poll_cb> returns, so normally you
+don't have to do anything special to have it called later.
 
 Apart from calling C<IO::AIO::poll_cb> when the event filehandle becomes
 ready, it can be beneficial to call this function from loops which submit
@@ -1782,10 +1798,11 @@ SYNOPSIS section, at the top of this document):
 
 =item IO::AIO::poll_wait
 
-If there are any outstanding requests and none of them in the result
-phase, wait till the result filehandle becomes ready for reading (simply
-does a C<select> on the filehandle. This is useful if you want to
-synchronously wait for some requests to finish).
+Wait until either at least one request is in the result phase or no
+requests are outstanding anymore.
+
+This is useful if you want to synchronously wait for some requests to
+become ready, without actually handling them.
 
 See C<nreqs> for an example.
 
@@ -2097,6 +2114,13 @@ See the C<splice(2)> manpage for details.
 
 Calls the GNU/Linux C<tee(2)> syscall, see it's manpage and the
 description for C<IO::AIO::splice> above for details.
+
+=item $actual_size = IO::AIO::pipesize $r_fh[, $new_size]
+
+Attempts to query or change the pipe buffer size. Obviously works only
+on pipes, and currently works only on GNU/Linux systems, and fails with
+C<-1>/C<ENOSYS> everywhere else. If anybody knows how to influence pipe buffer
+size on other systems, drop me a note.
 
 =back
 

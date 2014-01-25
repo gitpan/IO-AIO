@@ -23,6 +23,7 @@ libeio/xthread.h
 libeio/ecb.h
 libeio/eio.h
 libeio/eio.c
+libeio/etp.c
 libeio/libeio.m4
 libeio/config.h.in
 

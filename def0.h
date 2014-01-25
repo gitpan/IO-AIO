@@ -1,3 +1,5 @@
+/* GENERATED FILE */
+/* use ./gendef0 to regenerate this file */
 #ifndef ENOSYS
 #define ENOSYS 0
 #endif

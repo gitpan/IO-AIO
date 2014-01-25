@@ -3,7 +3,7 @@
 # inspired by treescan by Jamie Lokier <jamie@imbolc.ucc.ie>
 # about 40% faster than the original version (on my fs and raid :)
 
-use strict;
+use common::sense;
 use Getopt::Long;
 use Time::HiRes ();
 use IO::AIO;
@@ -67,7 +67,7 @@ sub scan {
    ++$n_dirs;
    aio_scandir $path, 8, sub {
       my ($dirs, $files) = @_
-         or warn "$path: $!\n";
+         or return warn "$path: $!\n";
 
       printfn "", [$path]   unless $opt_nodirs;
       printfn $path, $files unless $opt_nofiles;

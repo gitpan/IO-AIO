@@ -1,5 +1,6 @@
 Revision history for IO::AIO
 
+TODO: scandir - some dirs mostly contain subdirs - invert logic?
 TODO: aio_cptree/mvtree
 TODO: reduce condvar fairness: schedule hot-cache-threads first?
 TODO: vmsplice? (http://kerneltrap.org/node/6505 http://lwn.net/Articles/178199/)
@@ -9,6 +10,32 @@ TODO: getxattr etc.?
 TODO: F_DUPFD_CLOEXEC
 TODO: emulation for splice?
 TODO: eio_mmap|mlock|munmap|splice...
+TODO: syncfs/sync windows:
+TODO: F_SETPIPE_SZ, F_GETPIPE_SZ
+http://stackoverflow.com/questions/65170/how-to-get-name-associated-with-open-handle/5286888#5286888
+http://blogs.msdn.com/b/adioltean/archive/2005/04/16/408947.aspx
+http://msdn.microsoft.com/en-us/library/aa366789%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/aa366789%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/aa364425%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/aa364963%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/aa364996%28v=vs.85%29.aspx
+http://msdn.microsoft.com/en-us/library/windows/desktop/aa364994%28v=vs.85%29.aspx
+TODO: extra socket/tcp constants &c?
+
+4.2   Sat Jan 25 01:13:14 CET 2014
+	- aio_group could corrupt memory because it didn't restore
+          the stack after req_submit.
+        - be more careful on (e.g. permission) errors in bin/treescan.
+	- work around changes in ExtUtils::MakeMaker.
+	- (libeio) implement aio_realpath for win32.
+        - (xthread) work around compile time bugs in ptw32.
+        - added IO::AIO::pipesize.
+        - (libecb) insignificant update.
+
+4.19  Sun Jan  6 12:47:26 CET 2013
+	- avoid endless loop in fiemap with some XFS files.
+	- in aio_rename and aio_rmdir, specialcase the case of [$wd, "."]
+          and call rename/rmdir instead of renameat/unlinkat.
 
 4.18  Thu Oct 11 07:01:26 CEST 2012
 	- fix unintended xthread_create by intentionalising it :)

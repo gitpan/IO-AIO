@@ -66,7 +66,6 @@ DESCRIPTION
     This is a simple example that uses the EV module and loads /etc/passwd
     asynchronously:
 
-       use Fcntl;
        use EV;
        use IO::AIO;
 
@@ -532,8 +531,8 @@ FUNCTIONS
               fsid    => 1810
            }
 
-        Here is a (likely partial) list of fsid values used by Linux - it is
-        safe to hardcode these when the $^O is "linux":
+        Here is a (likely partial - send me updates!) list of fsid values
+        used by Linux - it is safe to hardcode these when $^O is "linux":
 
            0x0000adf5 adfs
            0x0000adff affs
@@ -694,7 +693,7 @@ FUNCTIONS
 
     aio_realpath $pathname, $callback->($path)
         Asynchronously make the path absolute and resolve any symlinks in
-        $path. The resulting path only consists of directories (Same as
+        $path. The resulting path only consists of directories (same as
         Cwd::realpath).
 
         This request can be used to get the absolute path of the current
@@ -704,6 +703,10 @@ FUNCTIONS
         Asynchronously rename the object at $srcpath to $dstpath, just as
         rename(2) and call the callback with the result code.
 
+        On systems that support the AIO::WD working directory abstraction
+        natively, the case "[$wd, "."]" as $srcpath is specialcased -
+        instead of failing, "rename" is called on the absolute path of $wd.
+
     aio_mkdir $pathname, $mode, $callback->($status)
         Asynchronously mkdir (create) a directory and call the callback with
         the result code. $mode will be modified by the umask at the time the
@@ -712,6 +715,10 @@ FUNCTIONS
     aio_rmdir $pathname, $callback->($status)
         Asynchronously rmdir (delete) a directory and call the callback with
         the result code.
+
+        On systems that support the AIO::WD working directory abstraction
+        natively, the case "[$wd, "."]" is specialcased - instead of
+        failing, "rmdir" is called on the absolute path of $wd.
 
     aio_readdir $pathname, $callback->($entries)
         Unlike the POSIX call of the same name, "aio_readdir" reads an
@@ -944,7 +951,7 @@ FUNCTIONS
         inside the scalar. All caveats and parameters are the same as for
         "aio_msync", above, except for flags, which must be either 0 (which
         reads all pages and ensures they are instantiated) or
-        "IO::AIO::MT_MODIFY", which modifies the memory page s(by reading
+        "IO::AIO::MT_MODIFY", which modifies the memory pages (by reading
         and writing an octet from it, which dirties the page).
 
     aio_mlock $scalar, $offset = 0, $length = undef, $callback->($status)
@@ -1155,7 +1162,7 @@ FUNCTIONS
     older systems. Some functions (such as realpath) will always rely on the
     string form of the pathname.
 
-    So this fucntionality is mainly useful to get some protection against
+    So this functionality is mainly useful to get some protection against
     "chdir", to easily get an absolute path out of a relative path for
     future reference, and to speed up doing many operations in the same
     directory (e.g. when stat'ing all files in a directory).
@@ -1175,19 +1182,26 @@ FUNCTIONS
         checking in the "aio_wd" callback, as future requests using the
         value will fail in the expected way.
 
-        If this call isn't available because your OS lacks it or it couldn't
-        be detected, it will be emulated by calling "fsync" instead.
-
     IO::AIO::CWD
         This is a compiletime constant (object) that represents the process
         current working directory.
 
         Specifying this object as working directory object for a pathname is
         as if the pathname would be specified directly, without a directory
-        object, e.g., these calls are functionally identical:
+        object. For example, these calls are functionally identical:
 
            aio_stat "somefile", sub { ... };
            aio_stat [IO::AIO::CWD, "somefile"], sub { ... };
+
+    To recover the path associated with an IO::AIO::WD object, you can use
+    "aio_realpath":
+
+       aio_realpath $wd, sub {
+          warn "path is $_[0]\n";
+       };
+
+    Currently, "aio_statvfs" always, and "aio_rename" and "aio_rmdir"
+    sometimes, fall back to using an absolue path.
 
   IO::AIO::REQ CLASS
     All non-aggregate "aio_*" functions return an object of this class when
@@ -1349,16 +1363,20 @@ FUNCTIONS
         See "poll_cb" for an example.
 
     IO::AIO::poll_cb
-        Process some outstanding events on the result pipe. You have to call
-        this regularly. Returns 0 if all events could be processed (or there
-        were no events to process), or -1 if it returned earlier for
-        whatever reason. Returns immediately when no events are outstanding.
-        The amount of events processed depends on the settings of
-        "IO::AIO::max_poll_req" and "IO::AIO::max_poll_time".
+        Process some requests that have reached the result phase (i.e. they
+        have been executed but the results are not yet reported). You have
+        to call this "regularly" to finish outstanding requests.
 
-        If not all requests were processed for whatever reason, the
-        filehandle will still be ready when "poll_cb" returns, so normally
-        you don't have to do anything special to have it called later.
+        Returns 0 if all events could be processed (or there were no events
+        to process), or -1 if it returned earlier for whatever reason.
+        Returns immediately when no events are outstanding. The amount of
+        events processed depends on the settings of "IO::AIO::max_poll_req",
+        "IO::AIO::max_poll_time" and "IO::AIO::max_outstanding".
+
+        If not all requests were processed for whatever reason, the poll
+        file descriptor will still be ready when "poll_cb" returns, so
+        normally you don't have to do anything special to have it called
+        later.
 
         Apart from calling "IO::AIO::poll_cb" when the event filehandle
         becomes ready, it can be beneficial to call this function from loops
@@ -1376,10 +1394,11 @@ FUNCTIONS
                       cb => \&IO::AIO::poll_cb);
 
     IO::AIO::poll_wait
-        If there are any outstanding requests and none of them in the result
-        phase, wait till the result filehandle becomes ready for reading
-        (simply does a "select" on the filehandle. This is useful if you
-        want to synchronously wait for some requests to finish).
+        Wait until either at least one request is in the result phase or no
+        requests are outstanding anymore.
+
+        This is useful if you want to synchronously wait for some requests
+        to become ready, without actually handling them.
 
         See "nreqs" for an example.
 
@@ -1663,6 +1682,12 @@ FUNCTIONS
     IO::AIO::tee $r_fh, $w_fh, $length, $flags
         Calls the GNU/Linux tee(2) syscall, see it's manpage and the
         description for "IO::AIO::splice" above for details.
+
+    $actual_size = IO::AIO::pipesize $r_fh[, $new_size]
+        Attempts to query or change the pipe buffer size. Obviously works
+        only on pipes, and currently works only on GNU/Linux systems, and
+        fails with -1/"ENOSYS" everywhere else. If anybody knows how to
+        influence pipe buffer size on other systems, drop me a note.
 
 EVENT LOOP INTEGRATION
     It is recommended to use AnyEvent::AIO to integrate IO::AIO

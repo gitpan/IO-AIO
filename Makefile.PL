@@ -16,15 +16,20 @@ if ($^O eq "MSWin32") {
 *** also, the windows SDK is expected to be installed in /sdk
 *** and visual C is expected to be installed in /vc98
 ***
-*** Akternatively, set the INC and LIBS environment variables
-*** accordingly before running Makeifle.PL, or you can
+*** Alternatively, set the INC and LIBS environment variables
+*** accordingly before running Makefile.PL, or you can
 *** pass INC and LIBS arguments to Makefile.PL itself.
 ***
 
 EOF
 
-   $INC  = "$ENV{INC} -I/sdk/include -I/vc98/include -I/gtk/include";
-   $LIBS = ["$ENV{LIBS} -L/gtk/lib -lpthreadVC2"];
+   if ($Config{cc} =~ /(?:^|\\|\/)gcc(?:|.*\.exe)$/) {
+      $INC  = "$ENV{INC} -I/gtk/include";
+      $LIBS = ["$ENV{LIBS} -L/gtk/lib -lpthreadGC2"];
+   } else {
+      $INC  = "$ENV{INC} -I/sdk/include -I/vc98/include -I/gtk/include";
+      $LIBS = ["$ENV{LIBS} -L/gtk/lib -lpthreadVC2"];
+   }
 
    open my $fh, ">libeio/config.h"
       or die "libeio/config.h: $!";
@@ -95,7 +100,7 @@ my $mm = MM->new({
        SUFFIX	=> '.gz',
     },
     depend => {
-       "AIO.c" => "schmorp.h libeio/eio.h libeio/xthread.h libeio/eio.c libeio/config.h",
+       "AIO.c" => "schmorp.h libeio/eio.h libeio/xthread.h libeio/etp.c libeio/eio.c libeio/config.h",
     },
     NAME         => "IO::AIO",
     VERSION_FROM => "AIO.pm",
@@ -103,7 +108,7 @@ my $mm = MM->new({
     LIBS         => $LIBS,
     EXE_FILES    => ["bin/treescan"],
     PM           => {
-       'AIO.pm'		=> '$(INST_LIBDIR)/AIO.pm',
+       'AIO.pm'		=> '$(INST_LIB)/IO/AIO.pm',
     },
     PREREQ_PM => {
        "common::sense" => 0,

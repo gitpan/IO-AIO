@@ -155,7 +155,7 @@ static void req_destroy  (eio_req *grp);
 # define minor(dev) ((dev) & 0xff)
 #endif
 
-#ifndef PAGESIZE
+#if PAGESIZE <= 0
 # define PAGESIZE sysconf (_SC_PAGESIZE)
 #endif
 
@@ -200,7 +200,7 @@ fiemap (eio_req *req)
     goto done;
 
   /* else we have to loop -
-   * it would be tempting (atcually I tried that first) to just query the
+   * it would be tempting (actually I tried that first) to just query the
    * number of extents needed, but linux often feels like not returning all
    * extents, without telling us it left any out. this complicates
    * this quite a bit.
@@ -222,6 +222,9 @@ fiemap (eio_req *req)
 
       if (ioctl (req->int1, FS_IOC_FIEMAP, incmap) < 0)
         return;
+
+      if (!incmap->fm_mapped_extents)
+        goto done;
 
       count = fiemap->fm_mapped_extents + incmap->fm_mapped_extents;
       fiemap = realloc (fiemap, sizeof (*fiemap) + sizeof (struct fiemap_extent) * count);
@@ -1615,7 +1618,10 @@ aio_group (SV *callback=&PL_sv_undef)
 
         req->type = EIO_GROUP;
 
+        PUTBACK;
         req_submit (req);
+        SPAGAIN;
+
         XPUSHs (req_sv (req, aio_grp_stash));
 }
 
@@ -1867,6 +1873,22 @@ tee (aio_rfd rfh, aio_wfd wfh, size_t length, unsigned int flags)
         RETVAL = EIO_ENOSYS ();
 #endif
 	OUTPUT:
+        RETVAL
+
+int
+pipesize (aio_rfd rfh, int new_size = -1)
+	PROTOTYPE: $;$
+        CODE:
+#if defined(F_SETPIPE_SZ) && defined(F_GETPIPE_SZ)
+        if (new_size >= 0)
+          RETVAL = fcntl (rfh, F_SETPIPE_SZ, new_size);
+        else
+          RETVAL = fcntl (rfh, F_GETPIPE_SZ);
+#else
+        errno = ENOSYS;
+        RETVAL = -1;
+#endif
+        OUTPUT:
         RETVAL
 
 void _on_next_submit (SV *cb)
