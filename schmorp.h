@@ -234,7 +234,7 @@ s_gensub (pTHX_ void (*xsub)(pTHX_ CV *), void *arg)
 /*****************************************************************************/
 /* portable pipe/socketpair */
 
-#ifdef USE_SOCKETS_AS_HANDLES
+#if defined(USE_SOCKETS_AS_HANDLES) || PERL_VERSION_ATLEAST(5,18,0)
 # define S_TO_HANDLE(x) ((HANDLE)win32_get_osfhandle (x))
 #else
 # define S_TO_HANDLE(x) ((HANDLE)x)

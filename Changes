@@ -22,6 +22,12 @@ http://msdn.microsoft.com/en-us/library/windows/desktop/aa364996%28v=vs.85%29.as
 http://msdn.microsoft.com/en-us/library/windows/desktop/aa364994%28v=vs.85%29.aspx
 TODO: extra socket/tcp constants &c?
 
+4.3   Fri Apr 11 06:22:38 CEST 2014
+	- perl5porters broke Async::Interrupt, BDB, EV, IO::AIO, OpenCL
+          without warning by switching the meaning of USE_SOCKETS_AS_HANDLES
+          in 5.18. What's so attractive about giving a shit about backwards
+          compatibility - I will never understand.
+
 4.2   Sat Jan 25 01:13:14 CET 2014
 	- aio_group could corrupt memory because it didn't restore
           the stack after req_submit.
