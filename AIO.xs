@@ -21,7 +21,11 @@
 # include <sys/mman.h>
 #endif
 
-#if __linux__
+/* the incompetent fool that created musl keeps __linux__, refuses
+ * to implement any linux standard apis, and also has no way to test
+ * for his broken iplementation. on't complain if this fails for you.
+ */
+#if __linux__ && (defined __GLIBC__ || defined __UCLIBC__)
 # include <linux/fs.h>
 # ifdef FS_IOC_FIEMAP
 #  include <linux/types.h>
@@ -1262,9 +1266,8 @@ aio_read (SV *fh, SV *offset, SV *length, SV8 *data, IV dataoffset, SV *callback
         else
           {
             /* read: check type and grow scalar as necessary */
-            SvUPGRADE (data, SVt_PV);
-            if (SvLEN (data) >= SvCUR (data))
-              svptr = SvGROW (data, len + dataoffset + 1);
+            if (!SvPOK (data) || SvLEN (data) >= SvCUR (data))
+              svptr = sv_grow (data, len + dataoffset + 1);
             else if (SvCUR (data) < len + dataoffset)
               croak ("length + dataoffset outside of scalar, and cannot grow");
           }
